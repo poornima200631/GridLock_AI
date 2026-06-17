@@ -13,74 +13,33 @@ import json
 st.set_page_config(page_title="GridLock AI", layout="wide", page_icon="🚦")
 
 # ==========================================
-# LIGHT/DARK MODE TOGGLE & CSS
+# CUSTOM COMPONENT CSS
 # ==========================================
-theme_toggle = st.sidebar.toggle("🌙 Enable Dark Mode", value=True)
-
-if theme_toggle:
-    st.markdown("""
-    <style>
-        .stApp { background-color: #1A1F2B; color: #E0E6ED; }
-        .stTabs [data-baseweb="tab-list"] { background-color: #242A38; border-radius: 8px; }
-        div[data-testid="metric-container"] {
-            background-color: #242A38;
-            border: 1px solid #3A4150;
-            padding: 15px;
-            border-radius: 12px;
-        }
-        .status-box {
-            background-color: #1B3B2B;
-            color: #A3E4D7;
-            padding: 20px;
-            border-radius: 10px;
-            border-left: 5px solid #2ECC71;
-            margin-bottom: 25px;
-        }
-        .alert-banner {
-            background: linear-gradient(90deg, #C0392B, #922B21);
-            color: white;
-            padding: 15px;
-            border-radius: 8px;
-            font-weight: bold;
-            text-align: center;
-            animation: pulse 2s infinite;
-            margin-bottom: 20px;
-        }
-        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.8; } 100% { opacity: 1; } }
-    </style>
-    """, unsafe_allow_html=True)
-else:
-    st.markdown("""
-    <style>
-        .stApp { background-color: #F8F9FA; color: #2C3E50; }
-        div[data-testid="metric-container"] {
-            background-color: #FFFFFF;
-            border: 1px solid #E5E7EB;
-            padding: 15px;
-            border-radius: 12px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-        }
-        .status-box {
-            background-color: #E8F8F5;
-            color: #145A32;
-            padding: 20px;
-            border-radius: 10px;
-            border-left: 5px solid #2ECC71;
-            margin-bottom: 25px;
-        }
-        .alert-banner {
-            background: linear-gradient(90deg, #E74C3C, #C0392B);
-            color: white;
-            padding: 15px;
-            border-radius: 8px;
-            font-weight: bold;
-            text-align: center;
-            animation: pulse 2s infinite;
-            margin-bottom: 20px;
-        }
-        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.8; } 100% { opacity: 1; } }
-    </style>
-    """, unsafe_allow_html=True)
+# We no longer inject .stApp background colors here to avoid flashing.
+# The dark mode is now handled natively via .streamlit/config.toml.
+st.markdown("""
+<style>
+    .status-box {
+        background-color: #1B3B2B;
+        color: #A3E4D7;
+        padding: 20px;
+        border-radius: 10px;
+        border-left: 5px solid #2ECC71;
+        margin-bottom: 25px;
+    }
+    .alert-banner {
+        background: linear-gradient(90deg, #C0392B, #922B21);
+        color: white;
+        padding: 15px;
+        border-radius: 8px;
+        font-weight: bold;
+        text-align: center;
+        animation: pulse 2s infinite;
+        margin-bottom: 20px;
+    }
+    @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.8; } 100% { opacity: 1; } }
+</style>
+""", unsafe_allow_html=True)
 
 st.title("🚦 GridLock AI — Urban Congestion Command Center")
 
@@ -226,7 +185,7 @@ with tab2:
             title="Severity Distribution",
             color='severity',
             color_discrete_map={"CRITICAL": "red", "HIGH": "orange", "MEDIUM": "yellow", "LOW": "green"},
-            template="plotly_dark" if theme_toggle else "plotly_white"
+            template="plotly_dark"
         )
         st.plotly_chart(fig1, use_container_width=True)
 
@@ -237,7 +196,7 @@ with tab2:
             top_10, x="zone_id_str", y="impact_score", color="severity",
             title="Top 10 Critical Zones",
             color_discrete_map={"CRITICAL": "red", "HIGH": "orange", "MEDIUM": "yellow", "LOW": "green"},
-            template="plotly_dark" if theme_toggle else "plotly_white"
+            template="plotly_dark"
         )
         st.plotly_chart(fig2, use_container_width=True)
 
@@ -247,7 +206,7 @@ with tab2:
             color="severity", size="risk_score", hover_data=["zone_id"],
             title="Impact vs Violations",
             color_discrete_map={"CRITICAL": "red", "HIGH": "orange", "MEDIUM": "yellow", "LOW": "green"},
-            template="plotly_dark" if theme_toggle else "plotly_white"
+            template="plotly_dark"
         )
         st.plotly_chart(fig3, use_container_width=True)
 
@@ -272,7 +231,7 @@ with tab3:
         title="Units Needed For Immediate Dispatch",
         color="Action",
         color_discrete_map={"🚨 Dispatch Tow Truck ASAP": "red", "🚓 Send Patrol Unit": "orange", "🟢 Issue E-Challan": "green"},
-        template="plotly_dark" if theme_toggle else "plotly_white"
+        template="plotly_dark"
     )
     st.plotly_chart(fig_dispatch, use_container_width=True)
     
@@ -299,8 +258,7 @@ with tab3:
     
     def highlight_critical(row):
         if row.severity == 'CRITICAL':
-            bg_color = "rgba(255, 0, 0, 0.2)" if theme_toggle else "rgba(255, 0, 0, 0.1)"
-            return [f'background-color: {bg_color}'] * len(row)
+            return ['background-color: rgba(255, 0, 0, 0.2)'] * len(row)
         return [''] * len(row)
         
     st.dataframe(
