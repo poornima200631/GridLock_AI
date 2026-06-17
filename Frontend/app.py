@@ -78,8 +78,14 @@ impact_multiplier = 1.0 + (future_mins * 0.05)
 simulated_df = impact_df.copy()
 simulated_df["impact_score"] = simulated_df["impact_score"] * impact_multiplier
 
+# Always show an AI Alert for the worst zone
+top_zone = impact_df.sort_values(by="impact_score", ascending=False).iloc[0]
+
 if future_mins > 0:
-    alert_msg = f"⚠️ PREDICTIVE ALERT (T+{future_mins} mins): Spillover expected in High Risk Zones. Pre-emptive dispatch engaged."
+    alert_msg = f"⚠️ PREDICTIVE AI ALERT (T+{future_mins} mins): Spillover expanding from Zone {top_zone['zone_id']}. Pre-emptive dispatch engaged."
+    st.markdown(f"<div class='alert-banner'>{alert_msg}</div>", unsafe_allow_html=True)
+else:
+    alert_msg = f"🚨 AI ALERT: Zone {top_zone['zone_id']} is a CRITICAL ZONE REQUIRING IMMEDIATE ACTION. Heavy congestion detected."
     st.markdown(f"<div class='alert-banner'>{alert_msg}</div>", unsafe_allow_html=True)
 
 # ==========================================
