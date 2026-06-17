@@ -5,7 +5,6 @@ from streamlit_folium import st_folium
 from folium.plugins import HeatMap
 from sklearn.cluster import DBSCAN
 import plotly.express as px
-import plotly.graph_objects as go
 import os
 import json
 
@@ -17,31 +16,30 @@ st.set_page_config(page_title="GridLock AI", layout="wide", page_icon="🚦")
 # ==========================================
 # LIGHT/DARK MODE TOGGLE & CSS
 # ==========================================
-# Sidebar toggle for Dark Mode
 theme_toggle = st.sidebar.toggle("🌙 Enable Dark Mode", value=True)
 
 if theme_toggle:
-    # Premium Dark Mode CSS matching the screenshot
+    # Premium Dark Mode CSS (NOT pure black, dark slate/navy instead)
     st.markdown("""
     <style>
-        .stApp { background-color: #0E1117; color: white; }
-        .stTabs [data-baseweb="tab-list"] { background-color: #1A1C24; border-radius: 8px; }
+        .stApp { background-color: #1A1F2B; color: #E0E6ED; }
+        .stTabs [data-baseweb="tab-list"] { background-color: #242A38; border-radius: 8px; }
         div[data-testid="metric-container"] {
-            background-color: #1A1C24;
-            border: 1px solid #2B2F3A;
+            background-color: #242A38;
+            border: 1px solid #3A4150;
             padding: 15px;
             border-radius: 12px;
         }
         .status-box {
-            background-color: #1a4d2e;
-            color: #e8f5e9;
+            background-color: #1B3B2B;
+            color: #A3E4D7;
             padding: 20px;
             border-radius: 10px;
-            border-left: 5px solid #4caf50;
+            border-left: 5px solid #2ECC71;
             margin-bottom: 25px;
         }
         .alert-banner {
-            background: linear-gradient(90deg, #ff4b4b, #8b0000);
+            background: linear-gradient(90deg, #C0392B, #922B21);
             color: white;
             padding: 15px;
             border-radius: 8px;
@@ -50,27 +48,31 @@ if theme_toggle:
             animation: pulse 2s infinite;
             margin-bottom: 20px;
         }
-        @keyframes pulse {
-            0% { opacity: 1; }
-            50% { opacity: 0.8; }
-            100% { opacity: 1; }
-        }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.8; } 100% { opacity: 1; } }
     </style>
     """, unsafe_allow_html=True)
 else:
     # Light Mode CSS
     st.markdown("""
     <style>
+        .stApp { background-color: #F8F9FA; color: #2C3E50; }
+        div[data-testid="metric-container"] {
+            background-color: #FFFFFF;
+            border: 1px solid #E5E7EB;
+            padding: 15px;
+            border-radius: 12px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
         .status-box {
-            background-color: #e8f5e9;
-            color: #1b5e20;
+            background-color: #E8F8F5;
+            color: #145A32;
             padding: 20px;
             border-radius: 10px;
-            border-left: 5px solid #4caf50;
+            border-left: 5px solid #2ECC71;
             margin-bottom: 25px;
         }
         .alert-banner {
-            background: linear-gradient(90deg, #ff4b4b, #cc0000);
+            background: linear-gradient(90deg, #E74C3C, #C0392B);
             color: white;
             padding: 15px;
             border-radius: 8px;
@@ -79,6 +81,7 @@ else:
             animation: pulse 2s infinite;
             margin-bottom: 20px;
         }
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.8; } 100% { opacity: 1; } }
     </style>
     """, unsafe_allow_html=True)
 
@@ -102,7 +105,7 @@ def load_data():
 df, impact_df, hotspot_df = load_data()
 
 # ==========================================
-# SIDEBAR: PREDICTIVE & MAP CONTROLS
+# SIDEBAR
 # ==========================================
 st.sidebar.markdown("---")
 st.sidebar.header("⚙️ Map Simulation Controls")
@@ -120,22 +123,18 @@ if future_mins > 0:
     st.markdown(f"<div class='alert-banner'>{alert_msg}</div>", unsafe_allow_html=True)
 
 # ==========================================
-# HEADER UI (REPLICATING SCREENSHOT EXACTLY)
+# HEADER UI
 # ==========================================
 st.markdown("##### Priority zones identified by the GridLock AI engine.")
 
-# Calculate exact metrics
 total_zones = len(impact_df)
 high_zones = len(impact_df[impact_df['severity'] == 'CRITICAL']) + len(impact_df[impact_df['severity'] == 'HIGH'])
 med_zones = len(impact_df[impact_df['severity'] == 'MEDIUM'])
 
 m1, m2, m3 = st.columns(3)
-with m1:
-    st.markdown(f"🔴 **High Risk Zones**\n# {high_zones}")
-with m2:
-    st.markdown(f"🟠 **Medium Risk Zones**\n# {med_zones}")
-with m3:
-    st.markdown(f"🟢 **Total Zones**\n# {total_zones}")
+with m1: st.markdown(f"🔴 **High Risk Zones**\n# {high_zones}")
+with m2: st.markdown(f"🟠 **Medium Risk Zones**\n# {med_zones}")
+with m3: st.markdown(f"🟢 **Total Zones**\n# {total_zones}")
 
 st.markdown("""
 <div class="status-box">
@@ -152,15 +151,17 @@ st.markdown("""
 # ==========================================
 tab1, tab2, tab3 = st.tabs(["🗺️ Live Congestion Map", "📊 ML Risk Analytics", "🚓 Priority Dispatch"])
 
-# === TAB 1: EXACT MAP FROM ORIGINAL CODE (LIGHT/DARK CONTROLLED) ===
+# === TAB 1: EXACT MAP (PERFECT LIGHT/DARK HANDLING) ===
 with tab1:
     st.subheader("Live City Congestion Map")
     
     center_lat = df["latitude"].mean()
     center_lon = df["longitude"].mean()
 
-    # Map switches tile style based on toggle
-    tile_style = "CartoDB dark_matter" if theme_toggle else "OpenStreetMap"
+    # Map switches tile style cleanly: 
+    # "CartoDB dark_matter" is perfect for Dark Mode
+    # "CartoDB positron" is a clean light grey map perfect for Light Mode
+    tile_style = "CartoDB dark_matter" if theme_toggle else "CartoDB positron"
     m = folium.Map(location=[center_lat, center_lon], zoom_start=12, tiles=tile_style)
 
     if show_heatmap:
@@ -185,7 +186,6 @@ with tab1:
                 popup=f"🔥 Hotspot Cluster {cluster_id}"
             ).add_to(m)
 
-    # Adding a sample of violations for speed
     sample_df = df.head(1000)
     for _, row in sample_df.iterrows():
         violation = str(row.get("violation_list", ""))
@@ -204,81 +204,57 @@ with tab1:
 
     st_folium(m, width=1200, height=600)
 
-# === TAB 2: ML RISK ANALYTICS (IMPROVED VISUALIZATION) ===
+# === TAB 2: ML RISK ANALYTICS (TOP 10 BROUGHT BACK) ===
 with tab2:
-    st.subheader("🤖 Deep ML Risk Analysis")
-    st.markdown("Visualizing the mathematical relationship between basic violation volume and our AI-calculated Impact Score.")
+    st.subheader("🤖 Deep ML Risk Analysis & Top Predictions")
     
     col_chart1, col_chart2 = st.columns(2)
     
-    # Chart 1: Bubble Chart
     with col_chart1:
         fig1 = px.scatter(
             impact_df, x="violation_count", y="impact_score", 
             color="severity", size="risk_score", hover_data=["zone_id"],
-            title="Impact vs Violations (Bubble Size = AI Risk Score)",
+            title="Impact vs Violations",
             color_discrete_map={"CRITICAL": "red", "HIGH": "orange", "MEDIUM": "yellow", "LOW": "green"},
             template="plotly_dark" if theme_toggle else "plotly_white"
         )
         st.plotly_chart(fig1, use_container_width=True)
         
-    # Chart 2: Donut Chart of Severity
     with col_chart2:
-        severity_counts = impact_df['severity'].value_counts().reset_index()
-        severity_counts.columns = ['severity', 'count']
-        fig2 = px.pie(
-            severity_counts, values='count', names='severity', hole=0.4,
-            title="Distribution of Zone Severities",
-            color='severity',
+        # TOP 10 PREDICTIONS (As requested by user)
+        top_10 = impact_df.sort_values(by="impact_score", ascending=False).head(10)
+        top_10["zone_id_str"] = "Zone " + top_10["zone_id"].astype(str)
+        fig2 = px.bar(
+            top_10, x="zone_id_str", y="impact_score", color="severity",
+            title="Top 10 ML Predicted Critical Zones",
             color_discrete_map={"CRITICAL": "red", "HIGH": "orange", "MEDIUM": "yellow", "LOW": "green"},
             template="plotly_dark" if theme_toggle else "plotly_white"
         )
         st.plotly_chart(fig2, use_container_width=True)
 
-# === TAB 3: DISPATCH CONSOLE (MATCHING SCREENSHOT) ===
+# === TAB 3: DISPATCH CONSOLE ===
 with tab3:
     st.subheader("🚓 Automated Action Output")
     
-    # 1. Dispatch Action Distribution Chart
-    st.markdown("##### Real-Time Dispatch Requirements")
-    action_counts = hotspot_df.copy()
+    st.markdown("##### Priority Action Table")
+    dispatch_df = hotspot_df.copy()
     
     def format_urgency_detailed(val):
         if val == "CRITICAL": return "🚨 Dispatch Tow Truck ASAP"
         if val == "HIGH": return "🚓 Send Patrol Unit"
         return "🟢 Issue E-Challan"
         
-    action_counts["Recommended_Action"] = action_counts["severity"].apply(format_urgency_detailed)
-    
-    action_summary = action_counts['Recommended_Action'].value_counts().reset_index()
-    action_summary.columns = ['Action', 'Count']
-    
-    fig3 = px.bar(
-        action_summary, x="Count", y="Action", orientation='h',
-        title="Units Needed For Immediate Dispatch",
-        color="Action",
-        color_discrete_map={"🚨 Dispatch Tow Truck ASAP": "red", "🚓 Send Patrol Unit": "orange", "🟢 Issue E-Challan": "green"},
-        template="plotly_dark" if theme_toggle else "plotly_white"
-    )
-    st.plotly_chart(fig3, use_container_width=True)
-    
-    # 2. Priority Dispatch Table (Like Screenshot)
-    st.markdown("##### Priority Action Table")
-    
-    dispatch_df = hotspot_df.copy()
     dispatch_df["Recommended_Action"] = dispatch_df["severity"].apply(format_urgency_detailed)
-    
-    # Match the columns exactly like the screenshot
     display_cols = ["zone_id", "severity", "risk_score", "impact_score", "Recommended_Action"]
     
-    # Round numbers for clean UI
     dispatch_df["risk_score"] = dispatch_df["risk_score"].round(4)
     dispatch_df["impact_score"] = dispatch_df["impact_score"].round(4)
     
-    # Highlight Critical rows
     def highlight_critical(row):
         if row.severity == 'CRITICAL':
-            return ['background-color: rgba(255, 0, 0, 0.1)'] * len(row)
+            # Dark mode uses subtle red background, Light mode uses brighter red background
+            bg_color = "rgba(255, 0, 0, 0.2)" if theme_toggle else "rgba(255, 0, 0, 0.1)"
+            return [f'background-color: {bg_color}'] * len(row)
         return [''] * len(row)
         
     st.dataframe(
