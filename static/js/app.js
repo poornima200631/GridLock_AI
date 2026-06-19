@@ -20,6 +20,8 @@ let APP = {
   sortCol: 'impact_score',
   sortAsc: false,
   filterSeverity: 'ALL',
+  resolvingZones: new Set(),
+  liveInterval: null,
 };
 
 // ── Zone label names (for top zones) ─────────────────────────────────────
@@ -97,6 +99,17 @@ function initSidebar() {
     overlay.classList.remove('visible');
   });
 
+  // Theme Toggle
+  const themeBtn = document.getElementById('themeToggleBtn');
+  if (themeBtn) {
+    themeBtn.addEventListener('click', () => {
+      document.documentElement.classList.toggle('light-theme');
+      const isLight = document.documentElement.classList.contains('light-theme');
+      themeBtn.textContent = isLight ? '🌙' : '🌞';
+      if (typeof updateChartTheme === 'function') updateChartTheme(isLight);
+    });
+  }
+
   // Heatmap toggle
   document.getElementById('toggleHeatmap').addEventListener('change', (e) => {
     APP.showHeatmap = e.target.checked;
@@ -165,6 +178,11 @@ async function loadAllData() {
     APP.violations = await violationsRes.json();
 
     populateDashboard();
+
+    // Start Live Simulation
+    if (!APP.liveInterval) {
+      APP.liveInterval = setInterval(simulateLiveFeed, 2500);
+    }
   } catch (err) {
     console.error('Failed to load data:', err);
   }
@@ -186,6 +204,76 @@ async function reloadWithSimulation() {
     updateStatCards();
   } catch (err) {
     console.error('Simulation reload failed:', err);
+  }
+}
+
+// ── Live Simulation Engine ───────────────────────────────────────────────
+function simulateLiveFeed() {
+  // Pause simulation if user is fast-forwarding
+  if (APP.zones.length === 0 || APP.futureMinutes > 0) return;
+
+  let changed = false;
+
+  APP.zones.forEach(z => {
+    // Check if zone is currently resolving (units dispatched)
+    if (APP.resolvingZones.has(z.zone_id)) {
+      // Decrease impact and violations slowly so radar is visible for longer
+      z.impact_score -= 0.05 + (Math.random() * 0.02);
+      z.violation_count = Math.max(0, z.violation_count - Math.floor(Math.random() * 5 + 2));
+      changed = true;
+
+      // If resolved, remove from resolving set
+      if (z.impact_score <= 0.4) {
+        z.impact_score = Math.max(0.2, z.impact_score);
+        APP.resolvingZones.delete(z.zone_id);
+      }
+    } else {
+      // 30% chance to increase congestion
+      if (Math.random() < 0.3) {
+        z.impact_score += 0.02 + (Math.random() * 0.06);
+        z.violation_count += Math.floor(Math.random() * 5 + 1);
+        changed = true;
+      } else {
+        // slight jitter
+        z.impact_score += (Math.random() - 0.5) * 0.01;
+        z.impact_score = Math.max(0.1, z.impact_score);
+        changed = true;
+      }
+
+      // If it hits CRITICAL, mark for resolution next tick (simulates dispatch)
+      if (z.impact_score >= 0.80 && Math.random() < 0.6) {
+        APP.resolvingZones.add(z.zone_id);
+      }
+    }
+
+    // Keep impact bounded
+    z.impact_score = Math.min(0.99, Math.max(0.01, z.impact_score));
+
+    // Update Severity
+    if (z.impact_score > 0.8) z.severity = "CRITICAL";
+    else if (z.impact_score > 0.6) z.severity = "HIGH";
+    else if (z.impact_score > 0.4) z.severity = "MEDIUM";
+    else z.severity = "LOW";
+  });
+
+  if (changed) {
+    // Sort zones by impact desc
+    APP.zones.sort((a, b) => b.impact_score - a.impact_score);
+
+    // Sync dispatch data
+    APP.dispatch.forEach(d => {
+      const z = APP.zones.find(zone => zone.zone_id === d.zone_id);
+      if (z) {
+        d.impact_score = z.impact_score;
+        d.violation_count = z.violation_count;
+        d.severity = z.severity;
+        if (d.severity === "CRITICAL") d.action = "🚨 Dispatch Tow Truck ASAP";
+        else if (d.severity === "HIGH") d.action = "🚓 Send Patrol Unit";
+        else d.action = "🟢 Issue E-Challan";
+      }
+    });
+
+    populateDashboard();
   }
 }
 
@@ -261,28 +349,47 @@ function updateAlertBanner() {
 // ══════════════════════════════════════════════════════════════════════════
 // ZONE MAP (Canvas)
 // ══════════════════════════════════════════════════════════════════════════
+let mapAnimStarted = false;
 function renderZoneMap() {
+  if (!mapAnimStarted) {
+    mapAnimStarted = true;
+    requestAnimationFrame(drawMapFrame);
+  }
+}
+
+function drawMapFrame() {
+  requestAnimationFrame(drawMapFrame);
+  const time = Date.now();
+
   const canvas = document.getElementById('zoneCanvas');
   const container = document.getElementById('mapContainer');
   const dpr = window.devicePixelRatio || 1;
 
-  canvas.width = container.clientWidth * dpr;
-  canvas.height = container.clientHeight * dpr;
-  canvas.style.width = container.clientWidth + 'px';
-  canvas.style.height = container.clientHeight + 'px';
+  const w = container.clientWidth;
+  const h = container.clientHeight;
+  
+  if (canvas.width !== Math.floor(w * dpr) || canvas.height !== Math.floor(h * dpr)) {
+    canvas.width = Math.floor(w * dpr);
+    canvas.height = Math.floor(h * dpr);
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+  }
 
   const ctx = canvas.getContext('2d');
+  ctx.save();
   ctx.scale(dpr, dpr);
 
-  const W = container.clientWidth;
-  const H = container.clientHeight;
+  const W = w;
+  const H = h;
+
+  const isLight = document.documentElement.classList.contains('light-theme');
 
   // Clear
-  ctx.fillStyle = '#080d19';
+  ctx.fillStyle = isLight ? '#e2e8f0' : '#080d19';
   ctx.fillRect(0, 0, W, H);
 
   // Draw grid
-  drawGrid(ctx, W, H);
+  drawGrid(ctx, W, H, isLight);
 
   if (APP.zones.length === 0) return;
 
@@ -315,21 +422,31 @@ function renderZoneMap() {
     return { zone: z, x, y, r };
   });
 
-  // Draw connecting lines (dashed)
+  // Draw connecting lines (dashed) and traffic dots
   if (APP.showClusters) {
-    drawConnections(ctx);
+    drawConnections(ctx, time, isLight);
   }
 
   // Draw heatmap glow
   if (APP.showHeatmap) {
+    // For dark mode 'screen' is great, for light mode 'multiply' or 'source-over' is better
+    ctx.globalCompositeOperation = isLight ? 'multiply' : 'screen'; 
     APP.canvasZones.forEach(cz => {
-      const gradient = ctx.createRadialGradient(cz.x, cz.y, 0, cz.x, cz.y, cz.r * (APP.heatRadius / 8));
+      // Pulse heatmap for CRITICAL
+      let hR = cz.r * (APP.heatRadius / 8);
+      if (cz.zone.severity === 'CRITICAL') {
+        hR += Math.sin(time / 150) * 15;
+      }
+
+      const gradient = ctx.createRadialGradient(cz.x, cz.y, 0, cz.x, cz.y, Math.max(1, hR));
       const color = getSeverityColor(cz.zone.severity);
-      gradient.addColorStop(0, color + '18');
+      // Use slightly softer opacity for light mode heatmap
+      gradient.addColorStop(0, color + (isLight ? '40' : '70')); 
       gradient.addColorStop(1, 'transparent');
       ctx.fillStyle = gradient;
-      ctx.fillRect(cz.x - cz.r * 3, cz.y - cz.r * 3, cz.r * 6, cz.r * 6);
+      ctx.fillRect(cz.x - hR * 2, cz.y - hR * 2, hR * 4, hR * 4);
     });
+    ctx.globalCompositeOperation = 'source-over'; // Reset
   }
 
   // Draw zone circles
@@ -339,12 +456,29 @@ function renderZoneMap() {
 
     // Outer glow ring
     ctx.beginPath();
-    ctx.arc(cz.x, cz.y, cz.r + 6, 0, Math.PI * 2);
+    
+    // Pulse animation for critical zones
+    let pulse = 0;
+    if (cz.zone.severity === 'CRITICAL') {
+      pulse = Math.sin(time / 150) * 8;
+    }
+    
+    ctx.arc(cz.x, cz.y, Math.max(1, cz.r + 6 + pulse), 0, Math.PI * 2);
     ctx.strokeStyle = color + (isHovered ? '60' : '25');
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 4]);
     ctx.stroke();
     ctx.setLineDash([]);
+
+    // Draw active dispatch radar if resolving
+    if (APP.resolvingZones && APP.resolvingZones.has(cz.zone.zone_id)) {
+       const radarR = (time % 800) / 800 * (cz.r * 2.5);
+       ctx.beginPath();
+       ctx.arc(cz.x, cz.y, cz.r + radarR, 0, Math.PI * 2);
+       ctx.strokeStyle = `rgba(0, 229, 255, ${1 - (radarR / (cz.r * 2.5))})`;
+       ctx.lineWidth = 2.5;
+       ctx.stroke();
+    }
 
     // Fill circle
     ctx.beginPath();
@@ -358,7 +492,7 @@ function renderZoneMap() {
     // Border
     ctx.beginPath();
     ctx.arc(cz.x, cz.y, cz.r, 0, Math.PI * 2);
-    ctx.strokeStyle = color + (isHovered ? 'cc' : '80');
+    ctx.strokeStyle = color + (isHovered ? 'cc' : (isLight ? 'aa' : '80'));
     ctx.lineWidth = isHovered ? 2.5 : 1.5;
     ctx.stroke();
 
@@ -366,16 +500,18 @@ function renderZoneMap() {
     const shortId = cz.zone.zone_id.replace('Z_', '');
     const parts = shortId.split('_');
     const label = parts.length >= 2 ? parts[0] : shortId;
-    ctx.fillStyle = color;
+    ctx.fillStyle = isLight ? '#0f172a' : color;
     ctx.font = `bold ${Math.max(12, cz.r * 0.4)}px 'JetBrains Mono', monospace`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(label, cz.x, cz.y);
   });
+  
+  ctx.restore();
 }
 
-function drawGrid(ctx, W, H) {
-  ctx.strokeStyle = 'rgba(26, 35, 64, 0.3)';
+function drawGrid(ctx, W, H, isLight) {
+  ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.05)' : 'rgba(26, 35, 64, 0.3)';
   ctx.lineWidth = 0.5;
   const spacing = 40;
   for (let x = 0; x < W; x += spacing) {
@@ -392,7 +528,7 @@ function drawGrid(ctx, W, H) {
   }
 }
 
-function drawConnections(ctx) {
+function drawConnections(ctx, time, isLight) {
   const zones = APP.canvasZones;
   ctx.setLineDash([5, 8]);
   ctx.lineWidth = 0.7;
@@ -407,8 +543,26 @@ function drawConnections(ctx) {
         ctx.beginPath();
         ctx.moveTo(zones[i].x, zones[i].y);
         ctx.lineTo(zones[j].x, zones[j].y);
-        ctx.strokeStyle = 'rgba(26, 35, 64, 0.5)';
+        ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.15)' : 'rgba(26, 35, 64, 0.5)';
         ctx.stroke();
+
+        // Draw moving traffic particles along the connection
+        const speed = 0.0005 + ((i + j) % 5) * 0.0002; // vary speeds slightly
+        const progress = ((time * speed) + (i * 0.1) + (j * 0.2)) % 1;
+        const dotX = zones[i].x - dx * progress;
+        const dotY = zones[i].y - dy * progress;
+
+        ctx.beginPath();
+        ctx.arc(dotX, dotY, 2.5, 0, Math.PI * 2);
+        // Color based on the target zone's severity
+        ctx.fillStyle = getSeverityColor(zones[i].zone.severity) + 'CC'; 
+        ctx.fill();
+        
+        // Add a slight glow to the particle
+        ctx.shadowBlur = 5;
+        ctx.shadowColor = ctx.fillStyle;
+        ctx.fill();
+        ctx.shadowBlur = 0; // reset
       }
     }
   }
@@ -590,6 +744,11 @@ function renderDispatchTable() {
       </tr>
     `;
   }).join('');
+
+  // Update dispatch chart if the function is available
+  if (typeof renderDispatchChart === 'function') {
+    renderDispatchChart(APP.dispatch);
+  }
 }
 
 // ── Download Report ──────────────────────────────────────────────────────

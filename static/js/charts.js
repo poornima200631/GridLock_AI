@@ -21,6 +21,44 @@ Chart.defaults.plugins.tooltip.bodyFont = { family: "'JetBrains Mono'", size: 11
 Chart.defaults.scale.grid = { color: 'rgba(26, 35, 64, 0.6)', lineWidth: 1 };
 Chart.defaults.scale.border = { color: '#1a2340' };
 
+function updateChartTheme(isLight) {
+  Chart.defaults.color = isLight ? '#475569' : '#8892a8';
+  Chart.defaults.scale.grid.color = isLight ? 'rgba(0, 0, 0, 0.05)' : 'rgba(26, 35, 64, 0.6)';
+  Chart.defaults.scale.border.color = isLight ? '#cbd5e1' : '#1a2340';
+  Chart.defaults.plugins.tooltip.backgroundColor = isLight ? 'rgba(255, 255, 255, 0.95)' : 'rgba(13, 18, 33, 0.95)';
+  Chart.defaults.plugins.tooltip.borderColor = isLight ? '#cbd5e1' : '#1a2340';
+  Chart.defaults.plugins.tooltip.titleColor = isLight ? '#0f172a' : '#fff';
+  Chart.defaults.plugins.tooltip.bodyColor = isLight ? '#334155' : '#fff';
+  
+  const cardBg = isLight ? '#ffffff' : '#0d1221';
+
+  for (let id in CHART_INSTANCES) {
+    const chart = CHART_INSTANCES[id];
+    // Update dataset borders if they match the old card background
+    chart.data.datasets.forEach(ds => {
+      if (ds.borderColor === '#0d1221' || ds.borderColor === '#ffffff') {
+        ds.borderColor = cardBg;
+      }
+    });
+    
+    // Update scales
+    if (chart.options.scales) {
+      for (let axis in chart.options.scales) {
+        if (chart.options.scales[axis].grid) {
+          chart.options.scales[axis].grid.color = Chart.defaults.scale.grid.color;
+        }
+        if (chart.options.scales[axis].border) {
+          chart.options.scales[axis].border.color = Chart.defaults.scale.border.color;
+        }
+        if (chart.options.scales[axis].ticks) {
+          chart.options.scales[axis].ticks.color = Chart.defaults.color;
+        }
+      }
+    }
+    chart.update();
+  }
+}
+
 const SEVERITY_COLORS = {
   CRITICAL: '#ff1744',
   HIGH: '#ff9100',

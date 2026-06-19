@@ -66,6 +66,51 @@
   --transition-slow: 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* ── Light Theme Tokens ───────────────────────────────────────────────────── */
+html.light-theme {
+  /* Backgrounds */
+  --bg-primary: #f0f4f8;
+  --bg-secondary: #ffffff;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f8fafc;
+  --bg-sidebar: #ffffff;
+  --bg-input: #f1f5f9;
+  --bg-map: #e2e8f0;
+
+  /* Borders */
+  --border-primary: #cbd5e1;
+  --border-glow: rgba(0, 0, 0, 0.05);
+  --border-subtle: rgba(0, 0, 0, 0.05);
+
+  /* Text */
+  --text-primary: #0f172a;
+  --text-secondary: #334155;
+  --text-muted: #64748b;
+  --text-label: #475569;
+
+  /* Accents */
+  --accent-cyan: #0284c7;  /* Darker blue for contrast */
+  --accent-green: #10b981;
+  --accent-green-dim: #059669;
+  --accent-orange: #f59e0b;
+  --accent-yellow: #eab308;
+  --accent-red: #ef4444;
+  --accent-red-soft: #f87171;
+  --accent-purple: #8b5cf6;
+  --accent-blue: #3b82f6;
+
+  /* Severity Colors (Slightly adjusted for light bg) */
+  --severity-critical: #dc2626;
+  --severity-high: #ea580c;
+  --severity-medium: #d97706;
+  --severity-low: #059669;
+
+  /* Shadows */
+  --shadow-card: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  --shadow-glow-cyan: 0 0 10px rgba(2, 132, 199, 0.2);
+  --shadow-glow-red: 0 0 10px rgba(239, 68, 68, 0.2);
+}
+
 /* ── Reset & Base ─────────────────────────────────────────────────────────── */
 *, *::before, *::after {
   margin: 0;
