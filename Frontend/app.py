@@ -5,7 +5,21 @@ from streamlit_folium import st_folium
 from folium.plugins import HeatMap
 import plotly.express as px
 import os
+import sys
 import json
+from datetime import datetime
+
+# Add Backend to path for twilio_dispatch import
+BACKEND_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "Backend"))
+if BACKEND_PATH not in sys.path:
+    sys.path.insert(0, BACKEND_PATH)
+
+# [COMMENTED OUT] Twilio dispatch — uncomment when secrets.toml is configured
+# from api.twilio_dispatch import send_sms, send_whatsapp, build_alert_message, is_twilio_configured
+from models.congestion_forecast import (
+    generate_city_forecast, generate_zone_forecast,
+    get_peak_hours, get_forecast_summary
+)
 
 # ==========================================
 # PAGE CONFIG
@@ -115,7 +129,7 @@ st.markdown("""
 # ==========================================
 # 3-TAB STRUCTURE
 # ==========================================
-tab1, tab2, tab3 = st.tabs(["🗺️ Live Congestion Map", "📊 ML Risk Analytics", "🚓 Priority Dispatch"])
+tab1, tab2, tab3, tab4 = st.tabs(["🗺️ Live Congestion Map", "📊 ML Risk Analytics", "🚓 Priority Dispatch", "🕒 24H Forecast"])
 
 # Dynamically escalate severity based on simulated impact_score
 def update_severity(score):
@@ -276,7 +290,7 @@ with tab2:
 
 # === TAB 3: DISPATCH CONSOLE ===
 with tab3:
-    st.subheader("🚓 Automated Action Output")
+    st.subheader("🚓 Automated Enforcement Dispatch Console")
     
     def format_urgency(val):
         if val == "CRITICAL": return "🚨 Dispatch Tow Truck ASAP"
@@ -286,6 +300,63 @@ with tab3:
     dispatch_df = simulated_df.copy()
     dispatch_df["Recommended_Action"] = dispatch_df["severity"].apply(format_urgency)
     
+    # ---- Custom CSS for dispatch panel ----
+    st.markdown("""
+    <style>
+        .dispatch-card {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            border: 1px solid #0f3460;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 15px;
+        }
+        .dispatch-card h4 {
+            color: #e94560;
+            margin-bottom: 10px;
+        }
+        .dispatch-success {
+            background: linear-gradient(135deg, #0d3b0d 0%, #1a4d1a 100%);
+            border: 1px solid #2ecc71;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 15px 0;
+            color: #a3e4d7;
+        }
+        .dispatch-demo {
+            background: linear-gradient(135deg, #2c2c0d 0%, #3d3d1a 100%);
+            border: 1px solid #f39c12;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 15px 0;
+            color: #fdebd0;
+        }
+        .dispatch-log {
+            background: #0a0a1a;
+            border: 1px solid #1a1a3e;
+            border-radius: 8px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            color: #00ff88;
+            max-height: 300px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+        .notify-header {
+            background: linear-gradient(90deg, #e94560, #c0392b);
+            color: white;
+            padding: 12px 20px;
+            border-radius: 10px;
+            text-align: center;
+            font-weight: bold;
+            font-size: 18px;
+            margin-bottom: 20px;
+            letter-spacing: 1px;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # ---- Overview Metrics ----
     st.markdown("##### 🚨 Critical Zones Requiring Immediate Action")
     action_summary = dispatch_df['Recommended_Action'].value_counts().reset_index()
     action_summary.columns = ['Action', 'Count']
@@ -300,6 +371,22 @@ with tab3:
     st.plotly_chart(fig_dispatch, use_container_width=True)
     
     st.markdown("---")
+
+    # ============================================================
+    # 📲 AUTOMATED DISPATCH NOTIFICATION PANEL
+    # [COMMENTED OUT] — Uncomment when .streamlit/secrets.toml is configured with Twilio creds
+    # ============================================================
+    st.markdown('<div class="notify-header">📲 AUTOMATED DISPATCH NOTIFICATION SYSTEM</div>', unsafe_allow_html=True)
+    st.info("📲 **Twilio SMS/WhatsApp Dispatch** is available but currently disabled. "
+            "To enable, configure `.streamlit/secrets.toml` with your Twilio credentials "
+            "and uncomment the Twilio code in `app.py`.")
+
+    
+    st.markdown("---")
+
+    # ============================================================
+    # ORIGINAL DISPATCH TABLE (preserved)
+    # ============================================================
     c_btn1, c_btn2 = st.columns([0.8, 0.2])
     with c_btn1:
         st.markdown("##### Priority Action Table (Enforcement Dispatch)")
@@ -343,3 +430,282 @@ with tab3:
         hide_index=True,
         height=500
     )
+
+# === TAB 4: 24-HOUR CONGESTION FORECAST ===
+with tab4:
+    st.subheader("🕒 24-Hour Predictive Congestion Forecast")
+
+    # ---- Custom CSS for forecast tab ----
+    st.markdown("""
+    <style>
+        .forecast-metric-card {
+            background: linear-gradient(135deg, #0f0c29 0%, #302b63 50%, #24243e 100%);
+            border-radius: 14px;
+            padding: 22px;
+            text-align: center;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        }
+        .forecast-metric-card h2 {
+            margin: 0;
+            font-size: 38px;
+        }
+        .forecast-metric-card p {
+            margin: 5px 0 0 0;
+            color: #a0a0c0;
+            font-size: 14px;
+        }
+        .peak-alert {
+            background: linear-gradient(90deg, #ff416c, #ff4b2b);
+            color: white;
+            padding: 14px 20px;
+            border-radius: 10px;
+            font-weight: bold;
+            margin: 8px 0;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .forecast-info-box {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            border: 1px solid #0f3460;
+            border-radius: 12px;
+            padding: 18px;
+            margin-top: 15px;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown("##### 🤖 AI-powered congestion predictions based on historical violation patterns & urban traffic modeling.")
+
+    # ---- Generate city-wide forecast ----
+    @st.cache_data
+    def get_city_forecast(_df_hash, _impact_hash):
+        return generate_city_forecast(df, impact_df, hours_ahead=24)
+
+    city_forecast = get_city_forecast(
+        hash(tuple(df.index.tolist()[:100])),
+        hash(tuple(impact_df["impact_score"].tolist()[:50]))
+    )
+    summary = get_forecast_summary(city_forecast)
+    peaks = get_peak_hours(city_forecast, top_n=3)
+
+    # ---- Summary Metrics Row ----
+    fc1, fc2, fc3, fc4 = st.columns(4)
+    with fc1:
+        color = "#ff4b2b" if summary["max_congestion"] > 75 else "#f39c12" if summary["max_congestion"] > 50 else "#2ecc71"
+        st.markdown(f"""
+        <div class="forecast-metric-card">
+            <h2 style="color: {color};">{summary['max_congestion']}</h2>
+            <p>🔺 Peak Congestion Index</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with fc2:
+        st.markdown(f"""
+        <div class="forecast-metric-card">
+            <h2 style="color: #3498db;">{summary['avg_congestion']}</h2>
+            <p>📊 Avg Congestion (24h)</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with fc3:
+        st.markdown(f"""
+        <div class="forecast-metric-card">
+            <h2 style="color: #e74c3c;">{summary['critical_hours']}</h2>
+            <p>🔴 Critical Hours Ahead</p>
+        </div>
+        """, unsafe_allow_html=True)
+    with fc4:
+        st.markdown(f"""
+        <div class="forecast-metric-card">
+            <h2 style="color: #e67e22;">{summary['high_hours']}</h2>
+            <p>🟠 High-Risk Hours Ahead</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ---- Peak Hour Alerts ----
+    st.markdown("##### ⚠️ Predicted Peak Congestion Windows")
+    for p in peaks:
+        risk_emoji = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🟢"}.get(p["risk_level"], "⚪")
+        st.markdown(f"""
+        <div class="peak-alert">
+            <span>{risk_emoji} {p['hour_label']} — Congestion Index: <strong>{p['congestion_index']:.1f}</strong></span>
+            <span style="opacity:0.8;">Risk: {p['risk_level']}</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # ---- Main Forecast Chart: Area chart with confidence bands ----
+    st.markdown("##### 📈 City-Wide Congestion Forecast (Next 24 Hours)")
+
+    import plotly.graph_objects as go
+
+    fig_forecast = go.Figure()
+
+    # Confidence band (filled area)
+    fig_forecast.add_trace(go.Scatter(
+        x=city_forecast["hour_label"],
+        y=city_forecast["confidence_upper"],
+        mode="lines",
+        line=dict(width=0),
+        showlegend=False,
+        hoverinfo="skip",
+    ))
+    fig_forecast.add_trace(go.Scatter(
+        x=city_forecast["hour_label"],
+        y=city_forecast["confidence_lower"],
+        mode="lines",
+        line=dict(width=0),
+        fill="tonexty",
+        fillcolor="rgba(99, 110, 250, 0.15)",
+        name="95% Confidence Band",
+        hoverinfo="skip",
+    ))
+
+    # Main prediction line
+    # Color each point by risk level
+    risk_colors = city_forecast["risk_level"].map({
+        "CRITICAL": "#e74c3c",
+        "HIGH": "#e67e22",
+        "MEDIUM": "#f1c40f",
+        "LOW": "#2ecc71",
+    }).tolist()
+
+    fig_forecast.add_trace(go.Scatter(
+        x=city_forecast["hour_label"],
+        y=city_forecast["congestion_index"],
+        mode="lines+markers",
+        name="Predicted Congestion",
+        line=dict(color="#636EFA", width=3),
+        marker=dict(size=10, color=risk_colors, line=dict(width=2, color="white")),
+        hovertemplate="<b>%{x}</b><br>Congestion: %{y:.1f}<br><extra></extra>",
+    ))
+
+    # Threshold lines
+    fig_forecast.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="CRITICAL", annotation_position="top right")
+    fig_forecast.add_hline(y=60, line_dash="dash", line_color="orange", annotation_text="HIGH", annotation_position="top right")
+    fig_forecast.add_hline(y=35, line_dash="dot", line_color="yellow", annotation_text="MEDIUM", annotation_position="top right")
+
+    fig_forecast.update_layout(
+        template="plotly_dark",
+        height=450,
+        yaxis_title="Congestion Index",
+        xaxis_title="Time",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        margin=dict(l=40, r=40, t=40, b=40),
+        yaxis=dict(range=[0, 105]),
+    )
+
+    st.plotly_chart(fig_forecast, use_container_width=True)
+
+    # ---- Predicted Violations Bar Chart ----
+    st.markdown("##### 🚗 Predicted Violations Per Hour")
+
+    fig_violations = px.bar(
+        city_forecast,
+        x="hour_label",
+        y="violations_predicted",
+        color="risk_level",
+        color_discrete_map={"CRITICAL": "#e74c3c", "HIGH": "#e67e22", "MEDIUM": "#f1c40f", "LOW": "#2ecc71"},
+        template="plotly_dark",
+        title="Estimated Parking Violations by Hour",
+    )
+    fig_violations.update_layout(
+        height=350,
+        xaxis_title="Time",
+        yaxis_title="Predicted Violations",
+        margin=dict(l=40, r=40, t=50, b=40),
+    )
+    st.plotly_chart(fig_violations, use_container_width=True)
+
+    # ---- Zone-Level Drill Down ----
+    st.markdown("---")
+    st.markdown("##### 🔍 Zone-Level Forecast Drill-Down")
+
+    top_zones_for_select = simulated_df.sort_values(by="impact_score", ascending=False).head(20)
+    zone_select = st.selectbox(
+        "Select a zone to view its 24h forecast:",
+        options=top_zones_for_select["zone_id"].tolist(),
+        format_func=lambda z: f"Zone {z} — {simulated_df[simulated_df['zone_id'] == z]['severity'].values[0]} "
+                               f"(Impact: {simulated_df[simulated_df['zone_id'] == z]['impact_score'].values[0]:.4f})",
+        key="forecast_zone_select"
+    )
+
+    zone_forecast = generate_zone_forecast(zone_select, simulated_df, df, hours_ahead=24)
+
+    if zone_forecast is not None:
+        zone_summary = get_forecast_summary(zone_forecast)
+
+        zc1, zc2, zc3 = st.columns(3)
+        with zc1:
+            st.metric("🔺 Peak Congestion", f"{zone_summary['max_congestion']}")
+        with zc2:
+            st.metric("📊 Avg Congestion", f"{zone_summary['avg_congestion']}")
+        with zc3:
+            st.metric("🔴 Critical Hours", f"{zone_summary['critical_hours']}")
+
+        fig_zone = go.Figure()
+
+        fig_zone.add_trace(go.Scatter(
+            x=zone_forecast["hour_label"],
+            y=zone_forecast["confidence_upper"],
+            mode="lines", line=dict(width=0),
+            showlegend=False, hoverinfo="skip",
+        ))
+        fig_zone.add_trace(go.Scatter(
+            x=zone_forecast["hour_label"],
+            y=zone_forecast["confidence_lower"],
+            mode="lines", line=dict(width=0),
+            fill="tonexty",
+            fillcolor="rgba(255, 99, 71, 0.15)",
+            name="Confidence Band",
+            hoverinfo="skip",
+        ))
+
+        zone_risk_colors = zone_forecast["risk_level"].map({
+            "CRITICAL": "#e74c3c", "HIGH": "#e67e22",
+            "MEDIUM": "#f1c40f", "LOW": "#2ecc71",
+        }).tolist()
+
+        fig_zone.add_trace(go.Scatter(
+            x=zone_forecast["hour_label"],
+            y=zone_forecast["congestion_index"],
+            mode="lines+markers",
+            name=f"Zone {zone_select} Forecast",
+            line=dict(color="#FF6347", width=3),
+            marker=dict(size=9, color=zone_risk_colors, line=dict(width=2, color="white")),
+            hovertemplate="<b>%{x}</b><br>Congestion: %{y:.1f}<extra></extra>",
+        ))
+
+        fig_zone.add_hline(y=80, line_dash="dash", line_color="red", annotation_text="CRITICAL")
+        fig_zone.add_hline(y=60, line_dash="dash", line_color="orange", annotation_text="HIGH")
+
+        fig_zone.update_layout(
+            template="plotly_dark",
+            height=400,
+            title=f"Zone {zone_select} — 24h Congestion Forecast",
+            yaxis_title="Congestion Index",
+            xaxis_title="Time",
+            yaxis=dict(range=[0, 105]),
+            margin=dict(l=40, r=40, t=50, b=40),
+        )
+        st.plotly_chart(fig_zone, use_container_width=True)
+    else:
+        st.warning("No data available for this zone.")
+
+    # ---- Model Info Box ----
+    st.markdown("""
+    <div class="forecast-info-box">
+        <h4>🧠 About this Forecast Model</h4>
+        <p style="color: #a0a0c0; font-size: 14px; line-height: 1.7;">
+            This forecast uses a <b>Composite Hybrid Model</b> that blends:<br>
+            📊 <b>60%</b> — Empirical hourly violation distribution (from real e-challan data)<br>
+            🏙️ <b>30%</b> — Calibrated urban traffic curve (Bengaluru peak-hour patterns)<br>
+            🎲 <b>10%</b> — Stochastic noise for realistic variance<br><br>
+            Confidence bands widen progressively to reflect increasing uncertainty over time.
+            Zone-level forecasts are adjusted by each zone's severity multiplier and historical impact score.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)

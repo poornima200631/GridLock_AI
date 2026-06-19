@@ -1,0 +1,385 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GridLock AI — Urban Congestion Command Center</title>
+  <meta name="description" content="AI-powered urban congestion command center for real-time traffic monitoring, predictive analytics, and automated enforcement dispatch." />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
+  <link rel="stylesheet" href="/static/css/style.css" />
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+  <!-- ═══ NAVBAR ═══ -->
+  <nav class="navbar" id="navbar">
+    <div class="navbar-left">
+      <a class="navbar-logo" href="/">
+        <div class="navbar-logo-icon">⚡</div>
+        <div class="navbar-logo-text">GridLock<span>AI</span></div>
+      </a>
+      <div class="navbar-badge">Command Center</div>
+    </div>
+    <div class="navbar-right">
+      <div class="navbar-live">
+        <div class="live-dot"></div>
+        <span>LIVE</span>
+      </div>
+      <div class="navbar-region">· Bengaluru Metro Region</div>
+      <div class="navbar-clock">
+        <span>⏱</span>
+        <span id="navClock">--:--:--</span>
+      </div>
+      <div class="navbar-icons">
+        <button class="navbar-icon-btn" title="Notifications" id="notifBtn">
+          🔔
+          <span class="notification-badge" id="notifCount">3</span>
+        </button>
+        <button class="navbar-icon-btn" title="Settings">⚙️</button>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ═══ ALERT BANNER ═══ -->
+  <div class="alert-banner" id="alertBanner">
+    <div class="alert-left">
+      <div class="alert-dot"></div>
+      <span class="alert-icon">⚠️</span>
+      <span class="alert-text" id="alertText">
+        <strong>ACTIVE ALERT:</strong> Loading zone data...
+      </span>
+    </div>
+    <div class="alert-right">
+      <span>INCIDENTS: <span id="incidentCount">--</span></span>
+      <span>ZONES MONITORED: <span id="zoneMonitored">--</span></span>
+    </div>
+  </div>
+
+  <!-- ═══ APP LAYOUT ═══ -->
+  <div class="app-layout">
+
+    <!-- ═══ SIDEBAR ═══ -->
+    <aside class="sidebar" id="sidebar">
+
+      <!-- Zone Status -->
+      <div class="sidebar-section">
+        <div class="sidebar-title">Zone Status</div>
+        <ul class="zone-status-list">
+          <li class="zone-status-item">
+            <span class="zone-status-label"><span class="zone-status-dot critical"></span> Critical Zones</span>
+            <span class="zone-status-count" id="sidebarCritical">--</span>
+          </li>
+          <li class="zone-status-item">
+            <span class="zone-status-label"><span class="zone-status-dot high"></span> High Risk</span>
+            <span class="zone-status-count" id="sidebarHigh">--</span>
+          </li>
+          <li class="zone-status-item">
+            <span class="zone-status-label"><span class="zone-status-dot medium"></span> Medium Risk</span>
+            <span class="zone-status-count" id="sidebarMedium">--</span>
+          </li>
+          <li class="zone-status-item">
+            <span class="zone-status-label"><span class="zone-status-dot low"></span> Total Zones</span>
+            <span class="zone-status-count" id="sidebarTotal">--</span>
+          </li>
+        </ul>
+      </div>
+
+      <!-- Map Controls -->
+      <div class="sidebar-section">
+        <div class="sidebar-title">Map Controls</div>
+        <div class="control-row">
+          <span class="control-label">Heatmap Layer</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="toggleHeatmap" checked />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="control-row">
+          <span class="control-label">Hotspot Clusters</span>
+          <label class="toggle-switch">
+            <input type="checkbox" id="toggleClusters" checked />
+            <span class="toggle-slider"></span>
+          </label>
+        </div>
+        <div class="slider-row">
+          <div class="slider-header">
+            <span class="control-label">Heat Radius</span>
+            <span class="slider-value" id="heatRadiusVal">12</span>
+          </div>
+          <input type="range" class="range-slider" id="heatRadius" min="5" max="25" value="12" />
+        </div>
+      </div>
+
+      <!-- Predictive AI Engine -->
+      <div class="sidebar-section">
+        <div class="sidebar-title">Predictive AI Engine</div>
+        <div class="slider-row">
+          <div class="slider-header">
+            <span class="control-label">Fast-Forward</span>
+            <span class="fast-forward-badge" id="ffBadge">NOW</span>
+          </div>
+          <input type="range" class="range-slider" id="fastForward" min="0" max="60" value="0" step="15" />
+          <div class="slider-ticks">
+            <span>NOW</span><span>+15</span><span>+30</span><span>+45</span><span>+60</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI Engine Status -->
+      <div class="sidebar-section">
+        <div class="sidebar-title">AI Engine Status</div>
+        <ul class="engine-status-list">
+          <li class="engine-status-item"><span class="engine-dot"></span> Spillover Predict</li>
+          <li class="engine-status-item"><span class="engine-dot"></span> Impact Scoring</li>
+          <li class="engine-status-item"><span class="engine-dot"></span> Hotspot Detect</li>
+          <li class="engine-status-item"><span class="engine-dot"></span> Dispatch AI</li>
+          <li class="engine-status-item"><span class="engine-dot warning"></span> ANPR Feed</li>
+        </ul>
+      </div>
+    </aside>
+
+    <!-- Sidebar overlay (mobile) -->
+    <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+    <!-- ═══ MAIN CONTENT ═══ -->
+    <main class="main-content" id="mainContent">
+
+      <!-- ── Stat Cards ── -->
+      <div class="stat-cards" id="statCards">
+        <div class="stat-card animate-in">
+          <div class="stat-card-header">
+            <span class="stat-card-title">Critical Zones</span>
+            <span class="stat-card-icon red">⚠️</span>
+          </div>
+          <div class="stat-card-value red" id="statCritical">--</div>
+          <div class="stat-card-delta">
+            <span class="delta-icon">↗</span>
+            <span>+0 vs baseline</span>
+          </div>
+        </div>
+        <div class="stat-card animate-in">
+          <div class="stat-card-header">
+            <span class="stat-card-title">Total Violations</span>
+            <span class="stat-card-icon orange">📈</span>
+          </div>
+          <div class="stat-card-value" id="statViolations">--</div>
+          <div class="stat-card-delta">
+            <span class="delta-icon">↗</span>
+            <span id="statIncidents">+0 active incidents</span>
+          </div>
+        </div>
+        <div class="stat-card animate-in">
+          <div class="stat-card-header">
+            <span class="stat-card-title">Avg Impact Score</span>
+            <span class="stat-card-icon green">📊</span>
+          </div>
+          <div class="stat-card-value cyan" id="statImpact">--</div>
+          <div class="stat-card-delta">
+            <span class="delta-icon">↗</span>
+            <span id="statImpactDelta">↑ 0.0</span>
+          </div>
+        </div>
+        <div class="stat-card animate-in">
+          <div class="stat-card-header">
+            <span class="stat-card-title">Units Deployed</span>
+            <span class="stat-card-icon">🚓</span>
+          </div>
+          <div class="stat-card-value green" id="statUnits">--</div>
+          <div class="stat-card-delta" id="statUnitsDetail">
+            -- tow trucks · -- patrols
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Tab Bar ── -->
+      <div class="tab-bar" id="tabBar">
+        <button class="tab-btn active" data-tab="map">
+          <span class="tab-btn-icon">📍</span> Live Congestion Map
+        </button>
+        <button class="tab-btn" data-tab="analytics">
+          <span class="tab-btn-icon">📊</span> ML Risk Analytics
+        </button>
+        <button class="tab-btn" data-tab="dispatch">
+          <span class="tab-btn-icon">🚓</span> Priority Dispatch
+        </button>
+        <button class="tab-btn" data-tab="forecast">
+          <span class="tab-btn-icon">🕒</span> 24H Forecast
+        </button>
+      </div>
+
+      <!-- ═══ TAB 1: LIVE CONGESTION MAP ═══ -->
+      <div class="tab-panel active" id="tab-map">
+        <div class="map-section">
+          <div class="map-header">
+            <div>
+              <h2 class="map-title">Live City Congestion Map</h2>
+              <p class="map-subtitle">Real-time zone state — hover zones for detail</p>
+            </div>
+            <div class="map-timestamp">
+              <span>🕐</span> Updated <span id="mapTimestamp">--:--:--</span>
+            </div>
+          </div>
+          <div class="map-container" id="mapContainer">
+            <canvas id="zoneCanvas"></canvas>
+            <div class="map-legend" id="mapLegend">
+              <div class="legend-item"><span class="legend-dot critical"></span> CRITICAL</div>
+              <div class="legend-item"><span class="legend-dot high"></span> HIGH</div>
+              <div class="legend-item"><span class="legend-dot medium"></span> MEDIUM</div>
+              <div class="legend-item"><span class="legend-dot low"></span> LOW</div>
+            </div>
+            <div class="map-compass"><span class="arrow">▲</span>N</div>
+            <div class="map-tooltip" id="mapTooltip">
+              <div class="map-tooltip-title" id="tooltipTitle">Zone</div>
+              <div class="map-tooltip-row"><span>Impact</span><span class="value" id="tooltipImpact">--</span></div>
+              <div class="map-tooltip-row"><span>Risk</span><span class="value" id="tooltipRisk">--</span></div>
+              <div class="map-tooltip-row"><span>Violations</span><span class="value" id="tooltipViolations">--</span></div>
+              <div class="map-tooltip-row"><span>Priority</span><span class="value" id="tooltipPriority">--</span></div>
+            </div>
+          </div>
+          <div class="map-footer-label">Bengaluru Metro Region — GridLock AI Layer v2.4.1</div>
+        </div>
+
+        <!-- Engine Status Bar -->
+        <div class="engine-status-bar">
+          <div class="sidebar-title">System Health Monitor</div>
+          <div class="engine-bar-list">
+            <div class="engine-bar-item">
+              <div class="engine-bar-left"><span class="engine-dot"></span><span class="engine-bar-name">Spillover Prediction Engine</span></div>
+              <div class="engine-bar-right"><span>LAT: 12ms</span><span class="metric green">UP: 99.97%</span></div>
+            </div>
+            <div class="engine-bar-item">
+              <div class="engine-bar-left"><span class="engine-dot"></span><span class="engine-bar-name">Impact Score Engine</span></div>
+              <div class="engine-bar-right"><span>LAT: 8ms</span><span class="metric green">UP: 99.99%</span></div>
+            </div>
+            <div class="engine-bar-item">
+              <div class="engine-bar-left"><span class="engine-dot"></span><span class="engine-bar-name">Hotspot Detection Module</span></div>
+              <div class="engine-bar-right"><span>LAT: 23ms</span><span class="metric green">UP: 99.94%</span></div>
+            </div>
+            <div class="engine-bar-item">
+              <div class="engine-bar-left"><span class="engine-dot"></span><span class="engine-bar-name">Enforcement Prioritization AI</span></div>
+              <div class="engine-bar-right"><span>LAT: 15ms</span><span class="metric green">UP: 99.98%</span></div>
+            </div>
+            <div class="engine-bar-item">
+              <div class="engine-bar-left"><span class="engine-dot"></span><span class="engine-bar-name">E-Challan Dispatch Gateway</span></div>
+              <div class="engine-bar-right"><span>LAT: 34ms</span><span class="metric green">UP: 99.91%</span></div>
+            </div>
+            <div class="engine-bar-item">
+              <div class="engine-bar-left"><span class="engine-dot warning"></span><span class="engine-bar-name">ANPR Feed Integration</span></div>
+              <div class="engine-bar-right"><span>LAT: 120ms</span><span class="metric" style="color:var(--accent-orange)">UP: 97.42%</span></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ TAB 2: ML RISK ANALYTICS ═══ -->
+      <div class="tab-panel" id="tab-analytics">
+        <div class="analytics-grid">
+          <div class="chart-card">
+            <div class="chart-card-title">Severity Distribution</div>
+            <div class="chart-container"><canvas id="chartSeverity"></canvas></div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-card-title">Primary Congestion Reasons</div>
+            <div class="chart-container"><canvas id="chartReasons"></canvas></div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-card-title">Top 10 Critical Enforcement Zones</div>
+            <div class="chart-container"><canvas id="chartTopZones"></canvas></div>
+          </div>
+          <div class="chart-card">
+            <div class="chart-card-title">Impact vs Total Violations</div>
+            <div class="chart-container"><canvas id="chartScatter"></canvas></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ TAB 3: PRIORITY DISPATCH ═══ -->
+      <div class="tab-panel" id="tab-dispatch">
+        <div class="dispatch-header">
+          <div class="dispatch-title">🚓 Automated Enforcement Dispatch Console</div>
+          <div class="dispatch-controls">
+            <select class="dispatch-select" id="severityFilter">
+              <option value="ALL">All Severities</option>
+              <option value="CRITICAL">🔴 Critical Only</option>
+              <option value="HIGH">🟠 High & Above</option>
+              <option value="MEDIUM">🟡 Medium & Above</option>
+            </select>
+            <button class="dispatch-btn" id="downloadBtn">📥 Download Report</button>
+          </div>
+        </div>
+
+        <!-- Dispatch summary chart -->
+        <div class="chart-card" style="margin-bottom:20px;">
+          <div class="chart-card-title">Units Needed For Immediate Dispatch</div>
+          <div class="chart-container" style="height:200px;"><canvas id="chartDispatch"></canvas></div>
+        </div>
+
+        <div class="dispatch-table-container">
+          <table class="dispatch-table" id="dispatchTable">
+            <thead>
+              <tr>
+                <th data-sort="zone_id">Zone ID <span class="sort-arrow">▼</span></th>
+                <th data-sort="severity">Severity <span class="sort-arrow">▼</span></th>
+                <th data-sort="risk_score">Risk Score <span class="sort-arrow">▼</span></th>
+                <th data-sort="impact_score">Impact Score <span class="sort-arrow">▼</span></th>
+                <th data-sort="violation_count">Violations <span class="sort-arrow">▼</span></th>
+                <th>Recommended Action</th>
+              </tr>
+            </thead>
+            <tbody id="dispatchBody">
+              <tr><td colspan="6" class="loading-spinner"><div class="spinner"></div> Loading dispatch data...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- ═══ TAB 4: 24H FORECAST ═══ -->
+      <div class="tab-panel" id="tab-forecast">
+        <div class="section-title">🤖 AI-powered congestion predictions based on historical violation patterns & urban traffic modeling</div>
+
+        <div class="forecast-metrics" id="forecastMetrics">
+          <div class="forecast-metric-card">
+            <div class="forecast-metric-value" id="forecastPeak" style="color:#ff4b2b;">--</div>
+            <div class="forecast-metric-label">🔺 Peak Congestion Index</div>
+          </div>
+          <div class="forecast-metric-card">
+            <div class="forecast-metric-value" id="forecastAvg" style="color:#3498db;">--</div>
+            <div class="forecast-metric-label">📊 Avg Congestion (24h)</div>
+          </div>
+          <div class="forecast-metric-card">
+            <div class="forecast-metric-value" id="forecastCritHours" style="color:#e74c3c;">--</div>
+            <div class="forecast-metric-label">🔴 Critical Hours Ahead</div>
+          </div>
+          <div class="forecast-metric-card">
+            <div class="forecast-metric-value" id="forecastHighHours" style="color:#e67e22;">--</div>
+            <div class="forecast-metric-label">🟠 High-Risk Hours Ahead</div>
+          </div>
+        </div>
+
+        <div class="section-title">⚠️ Predicted Peak Congestion Windows</div>
+        <div class="peak-alerts" id="peakAlerts">
+          <div class="loading-spinner"><div class="spinner"></div> Loading forecast...</div>
+        </div>
+
+        <div class="section-title">📈 City-Wide Congestion Forecast (Next 24 Hours)</div>
+        <div class="chart-card" style="margin-bottom:24px;">
+          <div class="chart-container" style="height:350px;"><canvas id="chartForecast"></canvas></div>
+        </div>
+
+        <div class="section-title">🚗 Predicted Violations Per Hour</div>
+        <div class="chart-card">
+          <div class="chart-container" style="height:280px;"><canvas id="chartViolations"></canvas></div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Sidebar toggle (mobile) -->
+  <button class="sidebar-toggle" id="sidebarToggle">☰</button>
+
+  <script src="/static/js/charts.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>
