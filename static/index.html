@@ -6,6 +6,9 @@
   <title>GridLock AI — Urban Congestion Command Center</title>
   <meta name="description" content="AI-powered urban congestion command center for real-time traffic monitoring, predictive analytics, and automated enforcement dispatch." />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚡</text></svg>" />
+  <!-- Leaflet Map CSS & JS -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
   <link rel="stylesheet" href="/static/css/style.css" />
   <!-- Chart.js CDN -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
@@ -35,11 +38,56 @@
         <button class="navbar-icon-btn" title="Toggle Light/Dark Theme" id="themeToggleBtn">
           🌞
         </button>
-        <button class="navbar-icon-btn" title="Notifications" id="notifBtn">
-          🔔
-          <span class="notification-badge" id="notifCount">3</span>
-        </button>
-        <button class="navbar-icon-btn" title="Settings">⚙️</button>
+        <div class="navbar-icon-container">
+          <button class="navbar-icon-btn" title="Notifications" id="notifBtn">
+            🔔
+            <span class="notification-badge" id="notifCount">--</span>
+          </button>
+          <div class="notif-dropdown hidden" id="notifDropdown">
+            <div class="dropdown-header">
+              <span>Active System Alerts</span>
+              <button class="dropdown-clear-btn" id="btnDismissAllAlerts">Dismiss</button>
+            </div>
+            <ul class="dropdown-list" id="notifList">
+              <li class="placeholder">No critical incidents reported</li>
+            </ul>
+          </div>
+        </div>
+        <div class="navbar-icon-container">
+          <button class="navbar-icon-btn" title="Settings" id="settingsBtn">⚙️</button>
+          <div class="settings-dropdown hidden" id="settingsDropdown">
+            <div class="dropdown-header">
+              <span>System Configurations</span>
+            </div>
+            <div class="settings-body">
+              <div class="setting-item">
+                <label>Simulation Interval</label>
+                <select id="settingSimInterval" class="console-select">
+                  <option value="1000">Fast (1.0s)</option>
+                  <option value="2500" selected>Normal (2.5s)</option>
+                  <option value="5000">Slow (5.0s)</option>
+                  <option value="0">Paused</option>
+                </select>
+              </div>
+              <div class="setting-item">
+                <label>Dispatch Mode</label>
+                <div class="console-row">
+                  <button class="console-btn active" id="btnSettingDispatchAuto">Auto-Dispatch</button>
+                  <button class="console-btn" id="btnSettingDispatchManual">Manual Approve</button>
+                </div>
+              </div>
+              <div class="setting-item">
+                <label>Mappls Client ID</label>
+                <input type="text" id="settingMapplsId" placeholder="Paste Client ID" class="console-select" style="font-family:monospace; font-size:10px;" />
+              </div>
+              <div class="setting-item">
+                <label>Mappls Client Secret</label>
+                <input type="password" id="settingMapplsSecret" placeholder="Paste Client Secret" class="console-select" style="font-family:monospace; font-size:10px;" />
+              </div>
+              <button class="console-btn active" id="btnSaveSettings" style="margin-top: 8px; width:100%;">Save & Reload</button>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   </nav>
@@ -224,7 +272,86 @@
             </div>
           </div>
           <div class="map-container" id="mapContainer">
-            <canvas id="zoneCanvas"></canvas>
+            <div id="map" style="width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 1;"></div>
+            <canvas id="zoneCanvas" style="display: none;"></canvas>
+
+            <!-- Floating Mappls Mobility Console -->
+            <div class="mappls-console" id="mapplsConsole">
+              <div class="console-header">
+                <span class="console-title">🌐 Mappls API Suite</span>
+                <span class="console-status-dot green" id="consoleStatus" title="Active"></span>
+              </div>
+              
+              <div class="console-body">
+                <div class="api-section">
+                  <div class="api-label">Map & Traffic Overlay</div>
+                  <div class="console-row">
+                    <button class="console-btn active" id="btnToggleTraffic" title="Toggle Vector Traffic Layer">🚦 Vector Traffic</button>
+                    <button class="console-btn" id="btnRecenter" title="Recenter to Bengaluru">📍 Recenter</button>
+                  </div>
+                </div>
+
+                <div class="api-section">
+                  <div class="api-label">Routing & Road Details (ETA API)</div>
+                  <div class="console-row">
+                    <button class="console-btn" id="btnCalculateRoute" title="Calculate traffic-aware route between top critical zones">🚗 Find Route</button>
+                    <button class="console-btn" id="btnSnapRoad" title="Snap noisy GPS coordinates to road network">🛣️ Snap GPS</button>
+                  </div>
+                  <div class="console-info-box hidden" id="routeInfoBox">
+                    <div class="info-line"><strong>Route:</strong> <span id="routePathText">--</span></div>
+                    <div class="info-line"><strong>Distance:</strong> <span id="routeDistanceText">--</span></div>
+                    <div class="info-line"><strong>ETA:</strong> <span id="routeEtaText">--</span> <span class="traffic-tag" id="routeTrafficText"></span></div>
+                    <div class="info-line"><strong>Road Type:</strong> <span id="routeRoadTypeText">--</span></div>
+                    <div class="info-line"><strong>Speed Limit:</strong> <span id="routeSpeedText">--</span></div>
+                  </div>
+                </div>
+
+                <div class="api-section">
+                  <div class="api-label">Nearby Responder Lookup</div>
+                  <div class="console-row" style="margin-bottom: 8px;">
+                    <select class="console-select" id="nearbySearchType">
+                      <option value="police station">Police Stations</option>
+                      <option value="towing service">Towing Yards</option>
+                    </select>
+                    <button class="console-btn" id="btnSearchNearby">🔍 Search</button>
+                  </div>
+                  <ul class="nearby-list" id="nearbyList">
+                    <li class="placeholder">Select a zone & click Search</li>
+                  </ul>
+                  <div class="place-detail-card hidden" id="placeDetailCard">
+                    <div class="detail-header">
+                      <div class="detail-name" id="placeDetailName">--</div>
+                      <button class="detail-close-btn" id="btnHidePlaceDetail">×</button>
+                    </div>
+                    <div class="detail-row"><span>Type:</span> <span id="placeDetailType">--</span></div>
+                    <div class="detail-row"><span>Address:</span> <span id="placeDetailAddr">--</span></div>
+                    <div class="detail-row"><span>Phone:</span> <span id="placeDetailPhone">--</span></div>
+                    <div class="detail-row"><span>Rating:</span> <span id="placeDetailRating">--</span></div>
+                  </div>
+                </div>
+
+                <div class="api-section">
+                  <div class="api-label">Predictive Flow & Distance Matrix</div>
+                  <div class="console-row">
+                    <button class="console-btn" id="btnShowMatrix" title="Compute distance matrix for top critical zones">📊 Matrix</button>
+                    <button class="console-btn" id="btnShowHae" title="Show Historical Average Speed (HAE) flow">📈 HAE Flow</button>
+                  </div>
+                  <!-- Mini Matrix Grid Container -->
+                  <div class="matrix-grid-box hidden" id="matrixGridBox">
+                    <div class="matrix-title">Distance Matrix (Top Critical Zones)</div>
+                    <div class="matrix-grid" id="matrixGrid"></div>
+                  </div>
+                  <!-- Predictive Flow Graph Container -->
+                  <div class="predictive-flow-box hidden" id="predictiveFlowBox">
+                    <div class="predictive-flow-title">HAE Predictive Speed Flow (Next 24h)</div>
+                    <div class="predictive-flow-chart-container" style="position: relative; height: 120px;">
+                      <canvas id="chartHaeFlow"></canvas>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
             <div class="map-legend" id="mapLegend">
               <div class="legend-item"><span class="legend-dot critical"></span> CRITICAL</div>
               <div class="legend-item"><span class="legend-dot high"></span> HIGH</div>
