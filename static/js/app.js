@@ -120,6 +120,7 @@ function initSidebar() {
       const isLight = document.documentElement.classList.contains('light-theme');
       themeBtn.textContent = isLight ? '🌙' : '🌞';
       if (typeof updateChartTheme === 'function') updateChartTheme(isLight);
+      updateMapTiles();
     });
   }
 
@@ -684,6 +685,33 @@ function normalizeRadius(violationCount) {
   return baseRadius * factor;
 }
 
+// ── Update Leaflet Map Tiles dynamically (Light vs Dark theme) ──────────────
+function updateMapTiles() {
+  if (APP.mapMode !== 'leaflet' || !APP.map) return;
+  const isLight = document.documentElement.classList.contains('light-theme');
+  const tileUrl = isLight 
+    ? 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
+    : 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png';
+    
+  if (APP.tileLayer) {
+    APP.tileLayer.setUrl(tileUrl);
+  } else {
+    APP.tileLayer = L.tileLayer(tileUrl, {
+      attribution: '&copy; CartoDB'
+    }).addTo(APP.map);
+  }
+}
+
+// ── Log MapMyIndia API payload to Mobility Console ─────────────────────────
+function logMapplsPayload(url, responseData) {
+  const urlEl = document.getElementById('payloadUrl');
+  const respEl = document.getElementById('payloadResponse');
+  if (urlEl) urlEl.textContent = url;
+  if (respEl) {
+    respEl.textContent = JSON.stringify(responseData, null, 2);
+  }
+}
+
 // ── Dynamic Map Initialization ───────────────────────────────────────────
 async function initInteractiveMap() {
   if (APP.map) return;
@@ -723,10 +751,7 @@ async function initInteractiveMap() {
       zoomAnimation: true
     });
 
-    // Dark Map Tiles
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; CartoDB'
-    }).addTo(APP.map);
+    updateMapTiles();
   } else {
     // Initialize Mappls Vector Map
     APP.map = new mappls.Map('map', {
@@ -831,20 +856,36 @@ function renderMapZones() {
         fillOpacity: APP.showHeatmap ? 0.35 : 0.08,
         opacity: APP.showHeatmap ? 0.9 : 0.3,
         weight: isResolving ? 3 : (APP.showHeatmap ? 2 : 0.5),
-        className: isResolving ? 'leaflet-radar-ripple' : ''
+        className: isResolving ? 'leaflet-radar-ripple' : '',
+        interactive: false // Forward events to the clickBuffer underneath
       };
 
-      const circle = L.polygon(hexCoords, hexStyle).addTo(APP.map);
+      const hexPolygon = L.polygon(hexCoords, hexStyle).addTo(APP.map);
+      APP.zoneMarkers[z.zone_id] = hexPolygon;
 
-      // ── Hover Tooltip ──
-      circle.on('mouseover', async (e) => {
+      // ── Invisible Interactive Overlay (makes hovering and clicking extremely easy) ──
+      const clickBuffer = L.circle([z.center_lat, z.center_lng], {
+        radius: Math.max(r, 250), // At least a 250m clickable area
+        color: 'transparent',
+        fillColor: 'transparent',
+        weight: 0,
+        interactive: true
+      }).addTo(APP.map);
+      
+      // Store in heatGlows so it gets automatically cleared on redraw
+      APP.heatGlows.push(clickBuffer);
+
+      // ── Hover Tooltip on clickBuffer ──
+      clickBuffer.on('mouseover', async (e) => {
         APP.hoveredZone = z.zone_id;
         let address = "Geocoding coordinates via API...";
-        circle.setStyle({ fillOpacity: 0.55, weight: 3 });
+        hexPolygon.setStyle({ fillOpacity: 0.55, weight: 3 });
 
         try {
-          const geoRes = await fetch(`/api/mappls/rev_geocode?lat=${z.center_lat}&lng=${z.center_lng}`);
+          const url = `/api/mappls/rev_geocode?lat=${z.center_lat}&lng=${z.center_lng}`;
+          const geoRes = await fetch(url);
           const geoData = await geoRes.json();
+          logMapplsPayload(url, geoData);
           if (geoData.results && geoData.results[0]) {
             address = geoData.results[0].formatted_address;
           }
@@ -872,20 +913,18 @@ function renderMapZones() {
         tooltip.classList.add('visible');
       });
 
-      circle.on('mouseout', () => {
+      clickBuffer.on('mouseout', () => {
         document.getElementById('mapTooltip').classList.remove('visible');
-        circle.setStyle({
+        hexPolygon.setStyle({
           fillOpacity: APP.showHeatmap ? 0.35 : 0.08,
           weight: APP.showHeatmap ? 2 : 0.5,
           opacity: APP.showHeatmap ? 0.9 : 0.3
         });
       });
 
-      circle.on('click', () => {
+      clickBuffer.on('click', () => {
         selectZoneForConsole(z.zone_id);
       });
-
-      APP.zoneMarkers[z.zone_id] = circle;
 
     } else {
       // Mappls Vector Circle Overlay
@@ -960,7 +999,6 @@ function renderMapZones() {
     }
   }
 
-  MapManager.recenter(12.9716, 77.5946);
   MapManager.setTraffic(APP.trafficEnabled);
 }
 
@@ -1179,6 +1217,44 @@ const MapManager = {
 
 // ── Initialize console event controllers ──────────────────────────────────
 function initMapplsConsole() {
+  // Expand/Collapse/Minimize Console & Live Payload Viewer
+  const consoleConsole = document.getElementById('mapplsConsole');
+  const payloadViewer = document.getElementById('consolePayloadViewer');
+  const expandArrow = document.getElementById('expandArrow');
+  const btnMinimize = document.getElementById('btnMinimizeConsole');
+
+  // Click to restore when minimized
+  if (consoleConsole) {
+    consoleConsole.addEventListener('click', () => {
+      if (consoleConsole.classList.contains('minimized')) {
+        consoleConsole.classList.remove('minimized');
+      }
+    });
+  }
+
+  // Minimize button handler
+  if (btnMinimize && consoleConsole) {
+    btnMinimize.addEventListener('click', (e) => {
+      e.stopPropagation(); // Prevent immediate restoration
+      consoleConsole.classList.add('minimized');
+      consoleConsole.classList.remove('expanded');
+      if (payloadViewer) payloadViewer.style.display = 'none';
+      if (expandArrow) expandArrow.textContent = '[+] EXPAND API';
+    });
+  }
+
+  // Expand/Collapse live payload viewer
+  if (expandArrow && consoleConsole && payloadViewer) {
+    expandArrow.addEventListener('click', (e) => {
+      e.stopPropagation(); // Prevent trigger console restore/minimize
+      if (consoleConsole.classList.contains('minimized')) return;
+      consoleConsole.classList.toggle('expanded');
+      const isExpanded = consoleConsole.classList.contains('expanded');
+      payloadViewer.style.display = isExpanded ? 'flex' : 'none';
+      expandArrow.textContent = isExpanded ? '[-] COLLAPSE API' : '[+] EXPAND API';
+    });
+  }
+
   // Toggle traffic
   const btnToggleTraffic = document.getElementById('btnToggleTraffic');
   btnToggleTraffic.addEventListener('click', () => {
@@ -1199,8 +1275,10 @@ function initMapplsConsole() {
     const z2 = APP.zones[1]; // Second critical zone
 
     try {
-      const res = await fetch(`/api/mappls/route?start_lat=${z1.center_lat}&start_lng=${z1.center_lng}&end_lat=${z2.center_lat}&end_lng=${z2.center_lng}`);
+      const url = `/api/mappls/route?start_lat=${z1.center_lat}&start_lng=${z1.center_lng}&end_lat=${z2.center_lat}&end_lng=${z2.center_lng}`;
+      const res = await fetch(url);
       const data = await res.json();
+      logMapplsPayload(url, data);
       
       if (data.routes && data.routes[0]) {
         const route = data.routes[0];
@@ -1255,8 +1333,10 @@ function initMapplsConsole() {
     const ptsQuery = rawPts.map(p => `${p[0]},${p[1]}`).join('|');
 
     try {
-      const res = await fetch(`/api/mappls/snap_to_road?pts=${ptsQuery}`);
+      const url = `/api/mappls/snap_to_road?pts=${ptsQuery}`;
+      const res = await fetch(url);
       const data = await res.json();
+      logMapplsPayload(url, data);
       
       if (data.snappedPoints) {
         const snappedPts = data.snappedPoints.map(p => [p.latitude, p.longitude]);
@@ -1288,8 +1368,10 @@ function initMapplsConsole() {
     const searchType = document.getElementById('nearbySearchType').value;
 
     try {
-      const res = await fetch(`/api/mappls/nearby?lat=${z.center_lat}&lng=${z.center_lng}&keyword=${searchType}`);
+      const url = `/api/mappls/nearby?lat=${z.center_lat}&lng=${z.center_lng}&keyword=${searchType}`;
+      const res = await fetch(url);
       const data = await res.json();
+      logMapplsPayload(url, data);
       
       const list = document.getElementById('nearbyList');
       if (data.suggestedLocations && data.suggestedLocations.length > 0) {
@@ -1323,8 +1405,10 @@ function initMapplsConsole() {
     const destinationsQuery = originsQuery; // Compute square matrix
 
     try {
-      const res = await fetch(`/api/mappls/distance_matrix?origins=${originsQuery}&destinations=${destinationsQuery}`);
+      const url = `/api/mappls/distance_matrix?origins=${originsQuery}&destinations=${destinationsQuery}`;
+      const res = await fetch(url);
       const data = await res.json();
+      logMapplsPayload(url, data);
       
       const box = document.getElementById('matrixGridBox');
       box.classList.remove('hidden');
@@ -1366,8 +1450,10 @@ function initMapplsConsole() {
 // ── Show Place Detail (Place Detail API eLoc entity lookup) ────────────────
 window.showPlaceDetail = async function(eloc) {
   try {
-    const res = await fetch(`/api/mappls/place_detail?eloc=${eloc}`);
+    const url = `/api/mappls/place_detail?eloc=${eloc}`;
+    const res = await fetch(url);
     const data = await res.json();
+    logMapplsPayload(url, data);
     
     const card = document.getElementById('placeDetailCard');
     card.classList.remove('hidden');
