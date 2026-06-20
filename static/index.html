@@ -84,6 +84,14 @@
                 <label>Mappls Client Secret</label>
                 <input type="password" id="settingMapplsSecret" placeholder="Paste Client Secret" class="console-select" style="font-family:monospace; font-size:10px;" />
               </div>
+              <div class="setting-item">
+                <label>Telegram Bot Token (Optional)</label>
+                <input type="password" id="settingTelegramToken" placeholder="bot123456:ABC-DEF1234..." class="console-select" style="font-family:monospace; font-size:10px;" />
+              </div>
+              <div class="setting-item">
+                <label>Telegram Chat ID</label>
+                <input type="text" id="settingTelegramChat" placeholder="e.g. 123456789" class="console-select" style="font-family:monospace; font-size:10px;" />
+              </div>
               <button class="console-btn active" id="btnSaveSettings" style="margin-top: 8px; width:100%;">Save & Reload</button>
             </div>
           </div>
@@ -274,6 +282,21 @@
           <div class="map-container" id="mapContainer">
             <div id="map" style="width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 1;"></div>
             <canvas id="zoneCanvas" style="display: none;"></canvas>
+
+            <!-- ANPR Live Feed Overlay -->
+            <div class="anpr-monitor" id="anprMonitor">
+              <div class="anpr-header">
+                <div><span class="live-dot" style="display:inline-block; margin-right:5px;"></span> LIVE ANPR FEED</div>
+                <div style="font-size: 9px; opacity: 0.7;">CAM-442 (MG ROAD)</div>
+              </div>
+              <div class="anpr-canvas-container">
+                <canvas id="anprCanvas" width="280" height="140"></canvas>
+                <div class="anpr-scanline"></div>
+              </div>
+              <div class="anpr-log" id="anprLog">
+                <div class="anpr-log-item">System initialized...</div>
+              </div>
+            </div>
 
             <!-- Floating Mappls Mobility Console -->
             <div class="mappls-console" id="mapplsConsole">
@@ -508,6 +531,9 @@
 
   <!-- Sidebar toggle (mobile) -->
   <button class="sidebar-toggle" id="sidebarToggle">☰</button>
+
+  <!-- Toast Notification Container -->
+  <div id="toastContainer" class="toast-container"></div>
 
   <script src="/static/js/charts.js"></script>
   <script src="/static/js/app.js"></script>

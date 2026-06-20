@@ -126,20 +126,20 @@ function initSidebar() {
   // Heatmap toggle
   document.getElementById('toggleHeatmap').addEventListener('change', (e) => {
     APP.showHeatmap = e.target.checked;
-    renderZoneMap();
+    if (APP.map) { renderMapZones(); } else { renderZoneMap(); }
   });
 
   // Clusters toggle
   document.getElementById('toggleClusters').addEventListener('change', (e) => {
     APP.showClusters = e.target.checked;
-    renderZoneMap();
+    if (APP.map) { renderMapZones(); } else { renderZoneMap(); }
   });
 
   // Heat radius slider
   document.getElementById('heatRadius').addEventListener('input', (e) => {
     APP.heatRadius = parseInt(e.target.value);
     document.getElementById('heatRadiusVal').textContent = APP.heatRadius;
-    renderZoneMap();
+    if (APP.map) { renderMapZones(); } else { renderZoneMap(); }
   });
 
   // Fast-forward slider
@@ -222,6 +222,14 @@ async function reloadWithSimulation() {
     updateAlertBanner();
     updateSidebarCounts();
     updateStatCards();
+
+    const mapContainer = document.getElementById('mapContainer');
+    if (APP.futureMinutes > 0) {
+      if (mapContainer) mapContainer.classList.add('future-mode');
+      showToast("Predictive Traffic", `Simulating conditions for T+${APP.futureMinutes} minutes.`, "warning");
+    } else {
+      if (mapContainer) mapContainer.classList.remove('future-mode');
+    }
   } catch (err) {
     console.error('Simulation reload failed:', err);
   }
@@ -255,7 +263,9 @@ function simulateLiveFeed() {
       }
 
       if (APP.dispatchMode !== 'manual' && z.impact_score >= 0.80 && Math.random() < 0.7) {
-        APP.resolvingZones.add(z.zone_id);
+        if (!APP.resolvingZones.has(z.zone_id)) {
+          APP.resolvingZones.add(z.zone_id);
+        }
       }
     }
 
@@ -370,13 +380,26 @@ let mapAnimStarted = false;
 function renderZoneMap() {
   if (APP.map) {
     // If interactive map initialized, render zones there!
-    updateMapLayers();
+    renderMapZones();
     return;
   }
   if (!mapAnimStarted) {
     mapAnimStarted = true;
     requestAnimationFrame(drawMapFrame);
   }
+}
+
+// ── Helper: Draw Hexagon (H3 Style) ──────────────────────────────────────
+function drawHexagon(ctx, x, y, size) {
+  for (let i = 0; i < 6; i++) {
+    const angle_deg = 60 * i - 30;
+    const angle_rad = Math.PI / 180 * angle_deg;
+    const hx = x + size * Math.cos(angle_rad);
+    const hy = y + size * Math.sin(angle_rad);
+    if (i === 0) ctx.moveTo(hx, hy);
+    else ctx.lineTo(hx, hy);
+  }
+  ctx.closePath();
 }
 
 function drawMapFrame() {
@@ -471,7 +494,7 @@ function drawMapFrame() {
     if (cz.zone.severity === 'CRITICAL') {
       pulse = Math.sin(time / 150) * 8;
     }
-    ctx.arc(cz.x, cz.y, Math.max(1, cz.r + 6 + pulse), 0, Math.PI * 2);
+    drawHexagon(ctx, cz.x, cz.y, Math.max(1, cz.r + 6 + pulse));
     ctx.strokeStyle = color + (isHovered ? '60' : '25');
     ctx.lineWidth = 1;
     ctx.setLineDash([4, 4]);
@@ -484,7 +507,7 @@ function drawMapFrame() {
          let progress = ((time + offset) % 1200) / 1200;
          const radarR = progress * (cz.r * 2.5);
          ctx.beginPath();
-         ctx.arc(cz.x, cz.y, cz.r + radarR, 0, Math.PI * 2);
+         drawHexagon(ctx, cz.x, cz.y, cz.r + radarR);
          ctx.strokeStyle = `rgba(0, 229, 255, ${1 - progress})`;
          ctx.lineWidth = 2;
          ctx.stroke();
@@ -492,7 +515,7 @@ function drawMapFrame() {
     }
 
     ctx.beginPath();
-    ctx.arc(cz.x, cz.y, cz.r, 0, Math.PI * 2);
+    drawHexagon(ctx, cz.x, cz.y, cz.r);
     const fillGrad = ctx.createRadialGradient(cz.x, cz.y, 0, cz.x, cz.y, cz.r);
     fillGrad.addColorStop(0, color + (isHovered ? '50' : '30'));
     fillGrad.addColorStop(1, color + (isHovered ? '20' : '10'));
@@ -500,7 +523,7 @@ function drawMapFrame() {
     ctx.fill();
 
     ctx.beginPath();
-    ctx.arc(cz.x, cz.y, cz.r, 0, Math.PI * 2);
+    drawHexagon(ctx, cz.x, cz.y, cz.r);
     ctx.strokeStyle = color + (isHovered ? 'cc' : (isLight ? 'aa' : '80'));
     ctx.lineWidth = isHovered ? 2.5 : 1.5;
     ctx.stroke();
@@ -717,9 +740,9 @@ async function initInteractiveMap() {
   renderMapZones();
 }
 
-// ── Render Circles representing Congested Zones ──────────────────────────
+// ── Render Hexagonal Zones on Interactive Map ────────────────────────────
 function renderMapZones() {
-  // Clear any existing zone layer components
+  // Clear all existing layers
   for (let id in APP.zoneMarkers) {
     if (APP.mapMode === 'leaflet') {
       APP.map.removeLayer(APP.zoneMarkers[id]);
@@ -729,34 +752,95 @@ function renderMapZones() {
   }
   APP.zoneMarkers = {};
 
-  const displayZones = APP.zones.slice(0, 30); // Plot top 30 critical hotspots
+  if (APP.heatGlows) {
+    APP.heatGlows.forEach(g => APP.map.removeLayer(g));
+  }
+  APP.heatGlows = [];
+
+  if (APP.clusterLines) {
+    APP.clusterLines.forEach(line => APP.map.removeLayer(line));
+  }
+  APP.clusterLines = [];
+
+  const displayZones = APP.zones.slice(0, 30);
 
   displayZones.forEach(z => {
     const color = getSeverityColor(z.severity);
-    const r = normalizeRadius(z.violation_count);
-    const opacity = APP.showHeatmap ? 0.2 : 0;
-    const strokeOpacity = APP.showHeatmap ? 0.8 : 0;
-    const weight = APP.showHeatmap ? 1.5 : 0;
+    const baseR = normalizeRadius(z.violation_count);
+    const r = baseR * (APP.heatRadius / 12);
+    const isResolving = APP.resolvingZones && APP.resolvingZones.has(z.zone_id);
 
     if (APP.mapMode === 'leaflet') {
-      const circle = L.circle([z.center_lat, z.center_lng], {
-        radius: r,
-        color: color,
-        fillColor: color,
-        fillOpacity: opacity,
-        opacity: strokeOpacity,
-        weight: weight
-      }).addTo(APP.map);
 
-      // Hover Tooltip featuring Geocode API address
+      // ── Heatmap Glow Layer (thermal spectrum circles underneath hex) ──
+      if (APP.showHeatmap) {
+        const thermalGradients = {
+          CRITICAL: { outer: '#ff9100', mid: '#ff3d00', inner: '#ff1744' },
+          HIGH:     { outer: '#ffc400', mid: '#ff9100', inner: '#ff6d00' },
+          MEDIUM:   { outer: '#ffee58', mid: '#fbc02d', inner: '#fbbf24' },
+          LOW:      { outer: '#a7ffeb', mid: '#69f0ae', inner: '#00e676' }
+        };
+        const grad = thermalGradients[z.severity] || { outer: color, mid: color, inner: color };
+
+        // Outer glow (faintest, largest)
+        const glowOuter = L.circle([z.center_lat, z.center_lng], {
+          radius: r * 2.2,
+          color: 'transparent',
+          fillColor: grad.outer,
+          fillOpacity: 0.05,
+          weight: 0,
+          interactive: false
+        }).addTo(APP.map);
+        APP.heatGlows.push(glowOuter);
+
+        // Mid glow
+        const glowMid = L.circle([z.center_lat, z.center_lng], {
+          radius: r * 1.5,
+          color: 'transparent',
+          fillColor: grad.mid,
+          fillOpacity: 0.12,
+          weight: 0,
+          interactive: false
+        }).addTo(APP.map);
+        APP.heatGlows.push(glowMid);
+
+        // Inner glow (most intense, smallest)
+        const glowInner = L.circle([z.center_lat, z.center_lng], {
+          radius: r * 0.9,
+          color: 'transparent',
+          fillColor: grad.inner,
+          fillOpacity: 0.20,
+          weight: 0,
+          interactive: false
+        }).addTo(APP.map);
+        APP.heatGlows.push(glowInner);
+      }
+
+      // ── H3 Hexagon (main zone marker) ──
+      const hexCoords = [];
+      const latR = r / 111320;
+      const lngR = r / (111320 * Math.cos(z.center_lat * (Math.PI / 180)));
+      for (let i = 0; i < 6; i++) {
+        const angle = (60 * i - 30) * (Math.PI / 180);
+        hexCoords.push([z.center_lat + latR * Math.sin(angle), z.center_lng + lngR * Math.cos(angle)]);
+      }
+
+      const hexStyle = {
+        color: isResolving ? '#00e5ff' : color,
+        fillColor: color,
+        fillOpacity: APP.showHeatmap ? 0.35 : 0.08,
+        opacity: APP.showHeatmap ? 0.9 : 0.3,
+        weight: isResolving ? 3 : (APP.showHeatmap ? 2 : 0.5),
+        className: isResolving ? 'leaflet-radar-ripple' : ''
+      };
+
+      const circle = L.polygon(hexCoords, hexStyle).addTo(APP.map);
+
+      // ── Hover Tooltip ──
       circle.on('mouseover', async (e) => {
         APP.hoveredZone = z.zone_id;
         let address = "Geocoding coordinates via API...";
-        if (APP.showHeatmap) {
-          circle.setStyle({ fillOpacity: 0.4, weight: 2.5 });
-        } else {
-          circle.setStyle({ fillOpacity: 0.1, weight: 1.0, opacity: 0.5 });
-        }
+        circle.setStyle({ fillOpacity: 0.55, weight: 3 });
 
         try {
           const geoRes = await fetch(`/api/mappls/rev_geocode?lat=${z.center_lat}&lng=${z.center_lng}`);
@@ -779,7 +863,7 @@ function renderMapZones() {
         const cr = container.getBoundingClientRect();
         let tx = e.originalEvent.clientX - cr.left + 16;
         let ty = e.originalEvent.clientY - cr.top - 10;
-        
+
         if (tx + 280 > container.clientWidth) tx = e.originalEvent.clientX - cr.left - 280;
         if (ty + 120 > container.clientHeight) ty = container.clientHeight - 130;
 
@@ -790,11 +874,11 @@ function renderMapZones() {
 
       circle.on('mouseout', () => {
         document.getElementById('mapTooltip').classList.remove('visible');
-        if (APP.showHeatmap) {
-          circle.setStyle({ fillOpacity: 0.2, weight: 1.5, opacity: 0.8 });
-        } else {
-          circle.setStyle({ fillOpacity: 0, weight: 0, opacity: 0 });
-        }
+        circle.setStyle({
+          fillOpacity: APP.showHeatmap ? 0.35 : 0.08,
+          weight: APP.showHeatmap ? 2 : 0.5,
+          opacity: APP.showHeatmap ? 0.9 : 0.3
+        });
       });
 
       circle.on('click', () => {
@@ -806,75 +890,80 @@ function renderMapZones() {
     } else {
       // Mappls Vector Circle Overlay
       try {
-        const circle = new mappls.Circle({
+        const mapCircle = new mappls.Circle({
           map: APP.map,
           center: {lat: z.center_lat, lng: z.center_lng},
           radius: r,
           fillColor: color,
           strokeColor: color,
-          fillOpacity: opacity,
-          strokeOpacity: strokeOpacity,
-          strokeWeight: weight
+          fillOpacity: APP.showHeatmap ? 0.2 : 0,
+          strokeOpacity: APP.showHeatmap ? 0.8 : 0,
+          strokeWeight: APP.showHeatmap ? 1.5 : 0
         });
 
-        circle.addListener('click', () => {
+        mapCircle.addListener('click', () => {
           selectZoneForConsole(z.zone_id);
         });
 
-        APP.zoneMarkers[z.zone_id] = circle;
+        APP.zoneMarkers[z.zone_id] = mapCircle;
       } catch (e) {
         console.error("Mappls circle rendering error:", e);
       }
     }
   });
 
+  // ── Cluster Network Lines ──
+  if (APP.mapMode === 'leaflet' && APP.showClusters) {
+    const distThreshold = 0.06;
+    for (let i = 0; i < displayZones.length; i++) {
+      for (let j = i + 1; j < displayZones.length; j++) {
+        const a = displayZones[i], b = displayZones[j];
+        const dist = Math.sqrt(
+          Math.pow(a.center_lat - b.center_lat, 2) +
+          Math.pow(a.center_lng - b.center_lng, 2)
+        );
+        if (dist < distThreshold) {
+          const avgImpact = (a.impact_score + b.impact_score) / 2;
+          let lineColor = '#00e5ff';
+          let lineWeight = 1.5;
+          if (avgImpact > 0.7) { lineColor = '#ff1744'; lineWeight = 3; }
+          else if (avgImpact > 0.5) { lineColor = '#ff9100'; lineWeight = 2.5; }
+          else if (avgImpact > 0.3) { lineColor = '#fbbf24'; lineWeight = 2; }
+
+          const line = L.polyline([
+            [a.center_lat, a.center_lng],
+            [b.center_lat, b.center_lng]
+          ], {
+            color: lineColor,
+            weight: lineWeight,
+            dashArray: '8, 6',
+            opacity: 0.9,
+            className: 'cluster-line-animated'
+          }).addTo(APP.map);
+          APP.clusterLines.push(line);
+
+          // Midpoint dot for visual flair
+          const dot = L.circleMarker([
+            (a.center_lat + b.center_lat) / 2,
+            (a.center_lng + b.center_lng) / 2
+          ], {
+            radius: 3,
+            fillColor: lineColor,
+            fillOpacity: 0.7,
+            color: lineColor,
+            weight: 1,
+            interactive: false
+          }).addTo(APP.map);
+          APP.clusterLines.push(dot);
+        }
+      }
+    }
+  }
+
   MapManager.recenter(12.9716, 77.5946);
   MapManager.setTraffic(APP.trafficEnabled);
 }
 
-// ── Update overlay sizes dynamically based on simulation ───────────────────
-function updateMapLayers() {
-  if (!APP.map) return;
-  const displayZones = APP.zones.slice(0, 30);
-  const opacity = APP.showHeatmap ? 0.2 : 0;
-  const strokeOpacity = APP.showHeatmap ? 0.8 : 0;
-  const weight = APP.showHeatmap ? 1.5 : 0;
-  
-  displayZones.forEach(z => {
-    const marker = APP.zoneMarkers[z.zone_id];
-    if (marker) {
-      const color = getSeverityColor(z.severity);
-      const r = normalizeRadius(z.violation_count);
-
-      if (APP.mapMode === 'leaflet') {
-        marker.setStyle({
-          color: color,
-          fillColor: color,
-          radius: r,
-          fillOpacity: opacity,
-          opacity: strokeOpacity,
-          weight: weight
-        });
-      } else {
-        try {
-          marker.setRadius(r);
-          marker.setFillColor(color);
-          marker.setStrokeColor(color);
-          if (typeof marker.setOption === 'function') {
-            marker.setOption({
-              fillOpacity: opacity,
-              strokeOpacity: strokeOpacity,
-              strokeWeight: weight
-            });
-          }
-        } catch (e) {
-          marker.radius = r;
-          marker.fillColor = color;
-        }
-      }
-    }
-  });
-}
 
 // ── Click zone handler to update Console ───────────────────────────────────
 function selectZoneForConsole(zoneId) {
@@ -1462,6 +1551,8 @@ function renderDispatchTable() {
         updateSidebarCounts();
         updateStatCards();
         showSystemNotification('Dispatch Approved', `Enforcement unit dispatched to ${getZoneLabel(zoneId)} (${zoneId}).`);
+        showToast("Manual Dispatch", `Unit sent to ${getZoneLabel(zoneId)}`, 'success');
+        sendTelegramAlert(`✅ *Manual Dispatch Approved*\n\n*Zone:* ${getZoneLabel(zoneId)} (${zoneId})\n*Action:* Unit Dispatched.`);
       });
     });
   }
@@ -1585,9 +1676,13 @@ function initNavbarDropdowns() {
       const clientId = document.getElementById('settingMapplsId').value.trim();
       const clientSecret = document.getElementById('settingMapplsSecret').value.trim();
       const intervalVal = parseInt(document.getElementById('settingSimInterval').value);
+      const tgToken = document.getElementById('settingTelegramToken')?.value.trim();
+      const tgChat = document.getElementById('settingTelegramChat')?.value.trim();
       
       APP.simInterval = intervalVal;
       localStorage.setItem('gridlock_sim_interval', intervalVal.toString());
+      if (tgToken) localStorage.setItem('gridlock_tg_token', tgToken);
+      if (tgChat) localStorage.setItem('gridlock_tg_chat', tgChat);
       
       try {
         saveBtn.textContent = 'Saving...';
@@ -1758,4 +1853,166 @@ async function loadSettings() {
   } catch (err) {
     console.error('Failed to load settings:', err);
   }
+
+  const tgToken = localStorage.getItem('gridlock_tg_token');
+  const tgChat = localStorage.getItem('gridlock_tg_chat');
+  if (tgToken && document.getElementById('settingTelegramToken')) document.getElementById('settingTelegramToken').value = tgToken;
+  if (tgChat && document.getElementById('settingTelegramChat')) document.getElementById('settingTelegramChat').value = tgChat;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   TOAST NOTIFICATIONS
+   ══════════════════════════════════════════════════════════════════════════ */
+function showToast(title, message, type = 'info') {
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  
+  let icon = 'ℹ️';
+  if (type === 'error') icon = '🚨';
+  if (type === 'success') icon = '✅';
+  if (type === 'warning') icon = '⚠️';
+
+  toast.innerHTML = `
+    <div class="toast-icon">${icon}</div>
+    <div class="toast-content">
+      <div class="toast-title">${title}</div>
+      <div class="toast-message">${message}</div>
+    </div>
+  `;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.animation = 'toast-exit 0.3s forwards';
+    setTimeout(() => toast.remove(), 300);
+  }, 4000);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   TELEGRAM INTEGRATION
+   ══════════════════════════════════════════════════════════════════════════ */
+async function sendTelegramAlert(message) {
+  const token = document.getElementById('settingTelegramToken')?.value;
+  const chatId = document.getElementById('settingTelegramChat')?.value;
+  
+  if (!token || !chatId) {
+    console.log("[Mock Telegram] No credentials. Would send:", message);
+    return;
+  }
+
+  try {
+    const url = `https://api.telegram.org/bot${token}/sendMessage`;
+    await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'Markdown' })
+    });
+  } catch (err) {
+    console.error("Telegram API Error:", err);
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ANPR CAMERA SIMULATOR LOOP
+   ══════════════════════════════════════════════════════════════════════════ */
+const anprCanvas = document.getElementById('anprCanvas');
+const anprCtx = anprCanvas ? anprCanvas.getContext('2d') : null;
+let anprCars = [];
+
+function generatePlate() {
+  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const num1 = Math.floor(Math.random() * 90 + 10);
+  const l1 = letters[Math.floor(Math.random() * 26)] + letters[Math.floor(Math.random() * 26)];
+  const num2 = Math.floor(Math.random() * 9000 + 1000);
+  return `KA-${num1}-${l1}-${num2}`;
+}
+
+function logAnpr(msg, isViolation = false) {
+  const logContainer = document.getElementById('anprLog');
+  if (!logContainer) return;
+  const item = document.createElement('div');
+  item.className = `anpr-log-item ${isViolation ? 'violation' : ''}`;
+  item.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  logContainer.prepend(item);
+  if (logContainer.children.length > 5) {
+    logContainer.removeChild(logContainer.lastChild);
+  }
+}
+
+function anprLoop() {
+  if (!anprCtx) return;
+  requestAnimationFrame(anprLoop);
+  
+  const w = anprCanvas.width;
+  const h = anprCanvas.height;
+  
+  // Draw Road Background
+  anprCtx.fillStyle = '#111';
+  anprCtx.fillRect(0, 0, w, h);
+  
+  // Draw Lane Dividers
+  anprCtx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+  anprCtx.lineWidth = 2;
+  anprCtx.setLineDash([10, 10]);
+  anprCtx.beginPath();
+  anprCtx.moveTo(0, h/2);
+  anprCtx.lineTo(w, h/2);
+  anprCtx.stroke();
+  anprCtx.setLineDash([]);
+  
+  // Manage Cars
+  if (Math.random() < 0.02) {
+    anprCars.push({
+      x: -40,
+      y: Math.random() > 0.5 ? h/4 : (h/4)*3,
+      speed: 2 + Math.random() * 3,
+      plate: generatePlate(),
+      color: `hsl(${Math.random() * 360}, 70%, 50%)`,
+      scanned: false,
+      violation: Math.random() < 0.15
+    });
+  }
+  
+  for (let i = anprCars.length - 1; i >= 0; i--) {
+    let car = anprCars[i];
+    car.x += car.speed;
+    
+    // Draw Car
+    anprCtx.fillStyle = car.color;
+    anprCtx.fillRect(car.x, car.y - 10, 30, 16);
+    
+    // Tracking Bounding Box
+    if (car.x > 30 && car.x < w - 30) {
+      anprCtx.strokeStyle = car.violation && car.scanned ? '#ff4b2b' : '#00e5ff';
+      anprCtx.lineWidth = 1.5;
+      anprCtx.strokeRect(car.x - 4, car.y - 14, 38, 24);
+      
+      // OCR Text
+      if (car.x > w/2 - 20 && !car.scanned) {
+        car.scanned = true;
+        if (car.violation) {
+          logAnpr(`VIOLATION: ${car.plate} (No Parking)`, true);
+          showToast("ANPR Alert", `Illegal Parking Detected: ${car.plate}`, 'error');
+          sendTelegramAlert(`🚨 *GridLock AI Alert*\n\n*Violation:* No Parking\n*Vehicle:* \`${car.plate}\`\n*Location:* CAM-442 (MG Road)\n*Action:* Tow Truck Dispatched automatically.`);
+        } else {
+          logAnpr(`SCAN: ${car.plate} - CLEAR`);
+        }
+      }
+      
+      if (car.scanned) {
+        anprCtx.fillStyle = '#fff';
+        anprCtx.font = '10px monospace';
+        anprCtx.fillText(car.plate, car.x - 5, car.y - 18);
+      }
+    }
+    
+    if (car.x > w) {
+      anprCars.splice(i, 1);
+    }
+  }
+}
+
+// Start ANPR Simulator
+if (anprCanvas) {
+  anprLoop();
 }
