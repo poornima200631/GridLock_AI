@@ -92,6 +92,26 @@
                 <label>Telegram Chat ID</label>
                 <input type="text" id="settingTelegramChat" placeholder="e.g. 123456789" class="console-select" style="font-family:monospace; font-size:10px;" />
               </div>
+              <div class="setting-item">
+                <label>Twilio Account SID (Optional)</label>
+                <input type="text" id="settingTwilioSid" placeholder="AC..." class="console-select" style="font-family:monospace; font-size:10px;" />
+              </div>
+              <div class="setting-item">
+                <label>Twilio Auth Token</label>
+                <input type="password" id="settingTwilioToken" placeholder="Paste Auth Token" class="console-select" style="font-family:monospace; font-size:10px;" />
+              </div>
+              <div class="setting-item">
+                <label>Twilio From Phone</label>
+                <input type="text" id="settingTwilioFrom" placeholder="e.g. +14155238886" class="console-select" style="font-family:monospace; font-size:10px;" />
+              </div>
+              <div class="setting-item">
+                <label>Twilio To Phone</label>
+                <input type="text" id="settingTwilioTo" placeholder="e.g. +91XXXXXXXXXX" class="console-select" style="font-family:monospace; font-size:10px;" />
+              </div>
+              <div class="setting-item">
+                <label>Twilio WhatsApp From (Sandbox)</label>
+                <input type="text" id="settingTwilioWhatsappFrom" placeholder="whatsapp:+14155238886" class="console-select" style="font-family:monospace; font-size:10px;" />
+              </div>
               <button class="console-btn active" id="btnSaveSettings" style="margin-top: 8px; width:100%;">Save & Reload</button>
             </div>
           </div>
@@ -489,8 +509,54 @@
 
       <!-- ═══ TAB 4: 24H FORECAST ═══ -->
       <div class="tab-panel" id="tab-forecast">
-        <div class="section-title">🤖 AI-powered congestion predictions based on historical violation patterns & urban traffic modeling</div>
+        <div class="section-title">🤖 AI-powered congestion predictions based on historical violation patterns &amp; urban traffic modeling</div>
 
+        <!-- ── Traffic Mitigation Impact ── -->
+        <div class="section-title" style="margin-top:0;">🌱 Real-World Traffic Mitigation Impact</div>
+        <div class="mitigation-metrics" id="mitigationMetrics">
+          <div class="mitigation-card">
+            <div class="mitigation-icon">🚗</div>
+            <div class="mitigation-value" id="mitVehiclesHelped">0</div>
+            <div class="mitigation-label">Vehicles Helped</div>
+          </div>
+          <div class="mitigation-card">
+            <div class="mitigation-icon">⏱</div>
+            <div class="mitigation-value" id="mitHoursSaved">0.0</div>
+            <div class="mitigation-label">Vehicle-Hours Saved</div>
+          </div>
+          <div class="mitigation-card">
+            <div class="mitigation-icon">⛽</div>
+            <div class="mitigation-value" id="mitFuelSaved">0 L</div>
+            <div class="mitigation-label">Fuel Saved</div>
+          </div>
+          <div class="mitigation-card">
+            <div class="mitigation-icon">🌿</div>
+            <div class="mitigation-value" id="mitCO2Saved">0 kg</div>
+            <div class="mitigation-label">CO₂ Emissions Avoided</div>
+          </div>
+          <div class="mitigation-card">
+            <div class="mitigation-icon">✅</div>
+            <div class="mitigation-value" id="mitZonesResolved">0</div>
+            <div class="mitigation-label">Zones Resolved</div>
+          </div>
+          <div class="mitigation-card">
+            <div class="mitigation-icon">📋</div>
+            <div class="mitigation-value" id="mitFinesIssued">0</div>
+            <div class="mitigation-label">E-Challans Issued</div>
+          </div>
+          <div class="mitigation-card">
+            <div class="mitigation-icon">🎯</div>
+            <div class="mitigation-value" id="mitEfficiency">0%</div>
+            <div class="mitigation-label">Resolution Efficiency</div>
+          </div>
+          <div class="mitigation-card">
+            <div class="mitigation-icon">🚔</div>
+            <div class="mitigation-value" id="mitActiveDispatches">0</div>
+            <div class="mitigation-label">Active Deployments</div>
+          </div>
+        </div>
+
+        <div class="section-title">📈 Congestion Forecast (Next 24h)</div>
         <div class="forecast-metrics" id="forecastMetrics">
           <div class="forecast-metric-card">
             <div class="forecast-metric-value" id="forecastPeak" style="color:#ff4b2b;">--</div>

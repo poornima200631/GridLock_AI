@@ -11,6 +11,7 @@ let APP = {
   dispatch: [],
   forecast: null,
   violations: null,
+  mitigationStats: null,
   hoveredZone: null,
   futureMinutes: 0,
   showHeatmap: true,
@@ -32,6 +33,8 @@ let APP = {
   routeLayer: null,
   snapRawLayer: null,
   snapCleanLayer: null,
+  spilloverMarkers: [], // dynamic cascade markers
+  incidentMarker: null, // click-to-report incident marker
   activeZoneId: null,
   chartHaeFlowInstance: null
 };
@@ -176,12 +179,13 @@ function initSidebar() {
 // ── Data Loading ─────────────────────────────────────────────────────────
 async function loadAllData() {
   try {
-    const [statsRes, zonesRes, dispatchRes, forecastRes, violationsRes] = await Promise.all([
+    const [statsRes, zonesRes, dispatchRes, forecastRes, violationsRes, mitigationRes] = await Promise.all([
       fetch('/api/stats'),
       fetch('/api/zones'),
       fetch('/api/dispatch'),
       fetch('/api/forecast'),
       fetch('/api/violations'),
+      fetch('/api/mitigation/stats'),
     ]);
 
     APP.stats = await statsRes.json();
@@ -189,8 +193,10 @@ async function loadAllData() {
     APP.dispatch = await dispatchRes.json();
     APP.forecast = await forecastRes.json();
     APP.violations = await violationsRes.json();
+    APP.mitigationStats = await mitigationRes.json();
 
     populateDashboard();
+    updateMitigationMetrics();
 
     // Initialize interactive map after dashboard data is populated
     initInteractiveMap();
@@ -738,6 +744,53 @@ async function initInteractiveMap() {
   // Setup Event Listeners and Plot initial zones
   initMapplsConsole();
   renderMapZones();
+
+  // ── Map Click-to-Report Incident ──────────────────────────────────────
+  if (APP.mapMode === 'leaflet') {
+    APP.map.on('click', async (e) => {
+      const lat = e.latlng.lat;
+      const lng = e.latlng.lng;
+
+      // Remove previous incident marker
+      if (APP.incidentMarker) APP.map.removeLayer(APP.incidentMarker);
+
+      // Place incident marker
+      const incidentIcon = L.divIcon({
+        className: '',
+        html: `<div style="width:28px;height:28px;border-radius:50%;background:rgba(255,23,68,0.9);
+          border:2px solid #fff;display:flex;align-items:center;justify-content:center;
+          font-size:14px;box-shadow:0 0 18px #ff1744;animation:pulse-red 1s infinite;">📍</div>`,
+        iconSize: [28, 28],
+        iconAnchor: [14, 14]
+      });
+      APP.incidentMarker = L.marker([lat, lng], { icon: incidentIcon }).addTo(APP.map);
+
+      // Geocode the click location
+      let address = 'Loading location...';
+      try {
+        const geoRes = await fetch(`/api/mappls/rev_geocode?lat=${lat}&lng=${lng}`);
+        const geoData = await geoRes.json();
+        if (geoData.results && geoData.results[0]) {
+          address = geoData.results[0].formatted_address;
+        }
+      } catch(e) { address = `${lat.toFixed(4)}, ${lng.toFixed(4)}`; }
+
+      APP.incidentMarker.bindPopup(
+        `<div style="font-family:monospace;font-size:11px;min-width:180px">
+          <div style="font-weight:bold;color:#ff1744;margin-bottom:4px;">📍 INCIDENT REPORT</div>
+          <div style="color:#333;margin-bottom:6px;">${address}</div>
+          <div style="color:#555;font-size:10px;">Lat: ${lat.toFixed(6)} · Lng: ${lng.toFixed(6)}</div>
+          <hr style="margin:6px 0;border-color:#eee;">
+          <div style="color:#ff9100;font-weight:bold;font-size:10px;">⚡ AI Cascade Analysis Active</div>
+        </div>`
+      ).openPopup();
+
+      // Trigger spillover cascade
+      simulateSpilloverCascade(lat, lng);
+
+      showToast('Incident Reported', `AI cascade analysis triggered at ${address.substring(0,35)}...`, 'warning');
+    });
+  }
 }
 
 // ── Render Hexagonal Zones on Interactive Map ────────────────────────────
@@ -1363,6 +1416,81 @@ function initMapplsConsole() {
   });
 }
 
+// ── Spillover Cascade Simulation ────────────────────────────────────────────
+function simulateSpilloverCascade(lat, lng) {
+  // Clear old cascade markers
+  APP.spilloverMarkers.forEach(m => APP.map.removeLayer(m));
+  APP.spilloverMarkers = [];
+
+  const cascadeRings = [
+    { radius: 400,  delay: 0,    color: '#ff1744', opacity: 0.55, label: 'EPICENTER' },
+    { radius: 800,  delay: 600,  color: '#ff6d00', opacity: 0.40, label: 'CASCADE L1' },
+    { radius: 1400, delay: 1200, color: '#fbc02d', opacity: 0.30, label: 'CASCADE L2' },
+    { radius: 2200, delay: 2000, color: '#7c4dff', opacity: 0.18, label: 'RISK ZONE' },
+  ];
+
+  cascadeRings.forEach((ring) => {
+    setTimeout(() => {
+      const circle = L.circle([lat, lng], {
+        radius: ring.radius,
+        color: ring.color,
+        fillColor: ring.color,
+        fillOpacity: ring.opacity * 0.3,
+        weight: 2,
+        opacity: ring.opacity,
+        dashArray: '6,4',
+        interactive: false
+      }).addTo(APP.map);
+
+      // Animated shrink-pulse effect
+      let pulse = 0;
+      const pInterval = setInterval(() => {
+        pulse++;
+        if (pulse > 8) {
+          clearInterval(pInterval);
+          setTimeout(() => {
+            APP.map.removeLayer(circle);
+            const idx = APP.spilloverMarkers.indexOf(circle);
+            if (idx > -1) APP.spilloverMarkers.splice(idx, 1);
+          }, 3000);
+          return;
+        }
+        circle.setStyle({ opacity: ring.opacity * (1 - pulse / 10) });
+      }, 400);
+
+      APP.spilloverMarkers.push(circle);
+    }, ring.delay);
+  });
+
+  // Find affected nearby zones and highlight them
+  const affectedZones = APP.zones.filter(z => {
+    const dlat = z.center_lat - lat;
+    const dlng = z.center_lng - lng;
+    const dist = Math.sqrt(dlat*dlat + dlng*dlng) * 111320;
+    return dist < 2500;
+  });
+
+  affectedZones.slice(0, 4).forEach((z, i) => {
+    setTimeout(() => {
+      const marker = APP.zoneMarkers[z.zone_id];
+      if (marker) {
+        marker.setStyle({ fillOpacity: 0.7, weight: 3.5, color: '#ff9100' });
+        setTimeout(() => marker.setStyle({
+          fillOpacity: 0.35, weight: 2, color: getSeverityColor(z.severity)
+        }), 2500);
+      }
+    }, 800 + i * 300);
+  });
+
+  if (affectedZones.length > 0) {
+    showToast(
+      '🌊 Cascade Detected',
+      `${affectedZones.length} adjacent zones at risk of spillover congestion.`,
+      'error'
+    );
+  }
+}
+
 // ── Show Place Detail (Place Detail API eLoc entity lookup) ────────────────
 window.showPlaceDetail = async function(eloc) {
   try {
@@ -1552,7 +1680,22 @@ function renderDispatchTable() {
         updateStatCards();
         showSystemNotification('Dispatch Approved', `Enforcement unit dispatched to ${getZoneLabel(zoneId)} (${zoneId}).`);
         showToast("Manual Dispatch", `Unit sent to ${getZoneLabel(zoneId)}`, 'success');
-        sendTelegramAlert(`✅ *Manual Dispatch Approved*\n\n*Zone:* ${getZoneLabel(zoneId)} (${zoneId})\n*Action:* Unit Dispatched.`);
+
+        // Secure backend dispatch (stores alert + sends Telegram/SMS/WhatsApp)
+        const dispatchZone = APP.dispatch.find(d => d.zone_id === zoneId);
+        const mapZone = APP.zones.find(z => z.zone_id === zoneId);
+        if (dispatchZone && mapZone) {
+          sendBackendDispatch({
+            zone_id: zoneId,
+            severity: dispatchZone.severity,
+            impact_score: dispatchZone.impact_score,
+            risk_score: dispatchZone.risk_score,
+            violation_count: dispatchZone.violation_count,
+            center_lat: mapZone.center_lat,
+            center_lng: mapZone.center_lng,
+            action: `✅ Manual Dispatch Approved — ${dispatchZone.action}`
+          });
+        }
       });
     });
   }
@@ -1673,32 +1816,51 @@ function initNavbarDropdowns() {
   const saveBtn = document.getElementById('btnSaveSettings');
   if (saveBtn) {
     saveBtn.addEventListener('click', async () => {
-      const clientId = document.getElementById('settingMapplsId').value.trim();
-      const clientSecret = document.getElementById('settingMapplsSecret').value.trim();
+      const clientId   = document.getElementById('settingMapplsId')?.value.trim() || '';
+      const clientSecret = document.getElementById('settingMapplsSecret')?.value.trim() || '';
+      const tgToken    = document.getElementById('settingTelegramToken')?.value.trim() || '';
+      const tgChat     = document.getElementById('settingTelegramChat')?.value.trim() || '';
+      const twilioSid  = document.getElementById('settingTwilioSid')?.value.trim() || '';
+      const twilioTok  = document.getElementById('settingTwilioToken')?.value.trim() || '';
+      const twilioFrom = document.getElementById('settingTwilioFrom')?.value.trim() || '';
+      const twilioTo   = document.getElementById('settingTwilioTo')?.value.trim() || '';
+      const twilioWaFrom = document.getElementById('settingTwilioWhatsappFrom')?.value.trim() || '';
       const intervalVal = parseInt(document.getElementById('settingSimInterval').value);
-      const tgToken = document.getElementById('settingTelegramToken')?.value.trim();
-      const tgChat = document.getElementById('settingTelegramChat')?.value.trim();
-      
+
       APP.simInterval = intervalVal;
       localStorage.setItem('gridlock_sim_interval', intervalVal.toString());
-      if (tgToken) localStorage.setItem('gridlock_tg_token', tgToken);
-      if (tgChat) localStorage.setItem('gridlock_tg_chat', tgChat);
-      
+
+      const configPayload = {
+        MAPPLS_CLIENT_ID: clientId,
+        MAPPLS_CLIENT_SECRET: clientSecret,
+        TELEGRAM_BOT_TOKEN: tgToken,
+        TELEGRAM_CHAT_ID: tgChat,
+        TWILIO_ACCOUNT_SID: twilioSid,
+        TWILIO_AUTH_TOKEN: twilioTok,
+        TWILIO_FROM_PHONE: twilioFrom,
+        TWILIO_TO_PHONE: twilioTo,
+        TWILIO_WHATSAPP_FROM: twilioWaFrom
+      };
+
+      // Remove empty keys so we don't overwrite existing with blank
+      Object.keys(configPayload).forEach(k => {
+        if (!configPayload[k]) delete configPayload[k];
+      });
+
       try {
         saveBtn.textContent = 'Saving...';
-        const res = await fetch('/api/mappls/save_keys', {
+        const res = await fetch('/api/config/save', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ client_id: clientId, client_secret: clientSecret })
+          body: JSON.stringify(configPayload)
         });
-        
+
         if (res.ok) {
-          showSystemNotification('Settings Saved', 'System configurations updated successfully.');
-          setTimeout(() => {
-            location.reload();
-          }, 1000);
+          showSystemNotification('Settings Saved', 'All credentials saved securely to server.');
+          showToast('Config Saved', 'Credentials synchronized with backend.', 'success');
+          setTimeout(() => location.reload(), 1200);
         } else {
-          showSystemNotification('Error Saving', 'Failed to save server credentials.');
+          showSystemNotification('Error Saving', 'Failed to save credentials to server.');
           saveBtn.textContent = 'Save & Reload';
         }
       } catch (err) {
@@ -1844,20 +2006,56 @@ function showSystemNotification(title, message) {
 
 async function loadSettings() {
   try {
-    const res = await fetch('/api/mappls/keys');
+    // Load all credentials from backend config
+    const res = await fetch('/api/config');
     if (res.ok) {
-      const data = await res.json();
-      if (data.client_id) document.getElementById('settingMapplsId').value = data.client_id;
-      if (data.client_secret) document.getElementById('settingMapplsSecret').value = data.client_secret;
+      const cfg = await res.json();
+      const setVal = (id, val) => {
+        const el = document.getElementById(id);
+        if (el && val) el.value = val;
+      };
+      setVal('settingMapplsId', cfg.MAPPLS_CLIENT_ID);
+      setVal('settingMapplsSecret', cfg.MAPPLS_CLIENT_SECRET);
+      setVal('settingTelegramToken', cfg.TELEGRAM_BOT_TOKEN);
+      setVal('settingTelegramChat', cfg.TELEGRAM_CHAT_ID);
+      setVal('settingTwilioSid', cfg.TWILIO_ACCOUNT_SID);
+      setVal('settingTwilioToken', cfg.TWILIO_AUTH_TOKEN);
+      setVal('settingTwilioFrom', cfg.TWILIO_FROM_PHONE);
+      setVal('settingTwilioTo', cfg.TWILIO_TO_PHONE);
+      setVal('settingTwilioWhatsappFrom', cfg.TWILIO_WHATSAPP_FROM);
     }
   } catch (err) {
-    console.error('Failed to load settings:', err);
+    console.error('Failed to load settings from backend:', err);
+    // Fallback: localStorage for Telegram credentials
+    const tgToken = localStorage.getItem('gridlock_tg_token');
+    const tgChat = localStorage.getItem('gridlock_tg_chat');
+    if (tgToken && document.getElementById('settingTelegramToken'))
+      document.getElementById('settingTelegramToken').value = tgToken;
+    if (tgChat && document.getElementById('settingTelegramChat'))
+      document.getElementById('settingTelegramChat').value = tgChat;
   }
+}
 
-  const tgToken = localStorage.getItem('gridlock_tg_token');
-  const tgChat = localStorage.getItem('gridlock_tg_chat');
-  if (tgToken && document.getElementById('settingTelegramToken')) document.getElementById('settingTelegramToken').value = tgToken;
-  if (tgChat && document.getElementById('settingTelegramChat')) document.getElementById('settingTelegramChat').value = tgChat;
+/* ══════════════════════════════════════════════════════════════════════════
+   TRAFFIC MITIGATION METRICS
+   ══════════════════════════════════════════════════════════════════════════ */
+function updateMitigationMetrics() {
+  const m = APP.mitigationStats;
+  if (!m) return;
+
+  const setMetric = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+  };
+
+  setMetric('mitVehiclesHelped', m.vehicles_helped ? m.vehicles_helped.toLocaleString() : '0');
+  setMetric('mitHoursSaved', m.hours_saved !== undefined ? m.hours_saved.toFixed(1) : '0.0');
+  setMetric('mitFuelSaved', m.fuel_saved_litres !== undefined ? m.fuel_saved_litres.toFixed(1) + ' L' : '0 L');
+  setMetric('mitCO2Saved', m.co2_saved_kg !== undefined ? m.co2_saved_kg.toFixed(1) + ' kg' : '0 kg');
+  setMetric('mitEfficiency', m.efficiency_score !== undefined ? m.efficiency_score + '%' : '0%');
+  setMetric('mitZonesResolved', m.zones_resolved !== undefined ? m.zones_resolved : '0');
+  setMetric('mitFinesIssued', m.fines_issued !== undefined ? m.fines_issued.toLocaleString() : '0');
+  setMetric('mitActiveDispatches', m.active_dispatches !== undefined ? m.active_dispatches : '0');
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1889,38 +2087,67 @@ function showToast(title, message, type = 'info') {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   TELEGRAM INTEGRATION
+   SECURE BACKEND DISPATCH (Telegram + SMS + WhatsApp via server)
    ══════════════════════════════════════════════════════════════════════════ */
-async function sendTelegramAlert(message) {
-  const token = document.getElementById('settingTelegramToken')?.value;
-  const chatId = document.getElementById('settingTelegramChat')?.value;
-  
-  if (!token || !chatId) {
-    console.log("[Mock Telegram] No credentials. Would send:", message);
-    return;
-  }
-
+async function sendBackendDispatch(zoneData) {
   try {
-    const url = `https://api.telegram.org/bot${token}/sendMessage`;
-    await fetch(url, {
+    const res = await fetch('/api/dispatch/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: chatId, text: message, parse_mode: 'Markdown' })
+      body: JSON.stringify(zoneData)
     });
+    const data = await res.json();
+    if (data.success) {
+      const s = data.status || {};
+      const channels = [];
+      if (s.telegram?.success)  channels.push('📢 Telegram');
+      if (s.sms?.success)       channels.push('📱 SMS');
+      if (s.whatsapp?.success)  channels.push('💬 WhatsApp');
+      if (channels.length > 0) {
+        showToast('Alert Dispatched', channels.join(' · '), 'success');
+      } else {
+        // Demo mode – credentials not configured yet
+        showToast('Demo Dispatch', 'Configure credentials in ⚙️ Settings to send live alerts.', 'info');
+      }
+    }
   } catch (err) {
-    console.error("Telegram API Error:", err);
+    console.error('[BackendDispatch] Error:', err);
   }
 }
 
+// Legacy alias – kept for ANPR call-sites
+async function sendTelegramAlert(message) {
+  // Route through backend secure dispatch for ANPR plate violations
+  const anprPayload = {
+    zone_id: 'ANPR_CAM442',
+    severity: 'HIGH',
+    impact_score: 0.72,
+    risk_score: 0.68,
+    violation_count: 1,
+    center_lat: 12.9750,
+    center_lng: 77.6100,
+    action: message
+  };
+  await sendBackendDispatch(anprPayload);
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
-   ANPR CAMERA SIMULATOR LOOP
+   HIGH-FIDELITY CCTV ANPR SURVEILLANCE SIMULATOR
    ══════════════════════════════════════════════════════════════════════════ */
 const anprCanvas = document.getElementById('anprCanvas');
 const anprCtx = anprCanvas ? anprCanvas.getContext('2d') : null;
 let anprCars = [];
+let anprFrame = 0;
+let anprScanLineY = 0;
+const ANPR_CAM_ID = 'CAM-442';
+const ANPR_LOCATION = 'MG Road, Bengaluru';
+
+const VEHICLE_TYPES = ['SEDAN', 'SUV', 'AUTO', 'TRUCK', 'BIKE', 'VAN'];
+const VEHICLE_WIDTHS = { SEDAN: 30, SUV: 36, AUTO: 22, TRUCK: 46, BIKE: 14, VAN: 40 };
+const VEHICLE_HEIGHTS = { SEDAN: 14, SUV: 18, AUTO: 16, TRUCK: 20, BIKE: 10, VAN: 18 };
 
 function generatePlate() {
-  const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
   const num1 = Math.floor(Math.random() * 90 + 10);
   const l1 = letters[Math.floor(Math.random() * 26)] + letters[Math.floor(Math.random() * 26)];
   const num2 = Math.floor(Math.random() * 9000 + 1000);
@@ -1934,82 +2161,178 @@ function logAnpr(msg, isViolation = false) {
   item.className = `anpr-log-item ${isViolation ? 'violation' : ''}`;
   item.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
   logContainer.prepend(item);
-  if (logContainer.children.length > 5) {
+  while (logContainer.children.length > 6) {
     logContainer.removeChild(logContainer.lastChild);
   }
+}
+
+function drawAnprOverlays(w, h, t) {
+  // Night-vision green vignette
+  const vign = anprCtx.createRadialGradient(w/2, h/2, h*0.2, w/2, h/2, h*0.9);
+  vign.addColorStop(0, 'rgba(0,255,70,0)');
+  vign.addColorStop(1, 'rgba(0,20,0,0.55)');
+  anprCtx.fillStyle = vign;
+  anprCtx.fillRect(0, 0, w, h);
+
+  // CRT horizontal scan-line sweep
+  anprScanLineY = (anprScanLineY + 1.2) % h;
+  const scanGrad = anprCtx.createLinearGradient(0, anprScanLineY - 3, 0, anprScanLineY + 3);
+  scanGrad.addColorStop(0, 'rgba(0,255,70,0)');
+  scanGrad.addColorStop(0.5, 'rgba(0,255,70,0.18)');
+  scanGrad.addColorStop(1, 'rgba(0,255,70,0)');
+  anprCtx.fillStyle = scanGrad;
+  anprCtx.fillRect(0, anprScanLineY - 3, w, 6);
+
+  // Fine CRT line pattern
+  anprCtx.globalAlpha = 0.04;
+  for (let ly = 0; ly < h; ly += 3) {
+    anprCtx.fillStyle = '#000';
+    anprCtx.fillRect(0, ly, w, 1);
+  }
+  anprCtx.globalAlpha = 1;
+
+  // Timestamp + camera ID overlay
+  anprCtx.fillStyle = 'rgba(0,0,0,0.45)';
+  anprCtx.fillRect(0, 0, w, 14);
+  anprCtx.fillStyle = '#00ff46';
+  anprCtx.font = 'bold 8px monospace';
+  anprCtx.textAlign = 'left';
+  anprCtx.fillText(`${ANPR_CAM_ID} · ${ANPR_LOCATION}`, 4, 10);
+  anprCtx.textAlign = 'right';
+  anprCtx.fillText(new Date().toLocaleTimeString(), w - 4, 10);
+  anprCtx.textAlign = 'left';
+
+  // Corner brackets (surveillance frame)
+  const bSize = 8;
+  const color = 'rgba(0,255,70,0.7)';
+  [[4,15],[w-4-bSize,15],[4,h-4-bSize],[w-4-bSize,h-4-bSize]].forEach(([bx, by]) => {
+    anprCtx.strokeStyle = color;
+    anprCtx.lineWidth = 1.5;
+    anprCtx.beginPath();
+    anprCtx.moveTo(bx, by + bSize); anprCtx.lineTo(bx, by); anprCtx.lineTo(bx + bSize, by);
+    anprCtx.stroke();
+  });
+
+  // Active scan zone indicator
+  const scanX = w/2 - 10 + Math.sin(t/400)*8;
+  anprCtx.strokeStyle = 'rgba(0,255,70,0.35)';
+  anprCtx.lineWidth = 1;
+  anprCtx.setLineDash([3,3]);
+  anprCtx.strokeRect(scanX, 18, 20, h - 22);
+  anprCtx.setLineDash([]);
 }
 
 function anprLoop() {
   if (!anprCtx) return;
   requestAnimationFrame(anprLoop);
-  
+
   const w = anprCanvas.width;
   const h = anprCanvas.height;
-  
-  // Draw Road Background
-  anprCtx.fillStyle = '#111';
+  anprFrame++;
+  const t = anprFrame;
+
+  // ── Road Scene ──
+  // Sky/background
+  anprCtx.fillStyle = '#040a04';
   anprCtx.fillRect(0, 0, w, h);
-  
-  // Draw Lane Dividers
-  anprCtx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-  anprCtx.lineWidth = 2;
-  anprCtx.setLineDash([10, 10]);
-  anprCtx.beginPath();
-  anprCtx.moveTo(0, h/2);
-  anprCtx.lineTo(w, h/2);
-  anprCtx.stroke();
+
+  // Road surface
+  anprCtx.fillStyle = '#0a120a';
+  anprCtx.fillRect(0, 14, w, h - 14);
+
+  // Lane markings
+  const laneY1 = 14 + (h - 14) / 3;
+  const laneY2 = 14 + (h - 14) * 2 / 3;
+  [laneY1, laneY2].forEach(ly => {
+    anprCtx.strokeStyle = 'rgba(0,255,70,0.12)';
+    anprCtx.lineWidth = 1;
+    anprCtx.setLineDash([12, 10]);
+    anprCtx.beginPath();
+    anprCtx.moveTo(0, ly); anprCtx.lineTo(w, ly);
+    anprCtx.stroke();
+  });
   anprCtx.setLineDash([]);
-  
-  // Manage Cars
-  if (Math.random() < 0.02) {
+
+  // ── Spawn Vehicles ──
+  if (Math.random() < 0.018) {
+    const vtype = VEHICLE_TYPES[Math.floor(Math.random() * VEHICLE_TYPES.length)];
+    const laneYs = [14 + (h-14)*0.17, 14 + (h-14)*0.5, 14 + (h-14)*0.83];
     anprCars.push({
-      x: -40,
-      y: Math.random() > 0.5 ? h/4 : (h/4)*3,
-      speed: 2 + Math.random() * 3,
+      x: -50,
+      y: laneYs[Math.floor(Math.random() * 3)],
+      speed: 1.8 + Math.random() * 2.8,
       plate: generatePlate(),
-      color: `hsl(${Math.random() * 360}, 70%, 50%)`,
+      type: vtype,
+      color: `hsl(${Math.random()*360}, 40%, ${20 + Math.random()*20}%)`,
       scanned: false,
+      confidence: Math.floor(88 + Math.random() * 12),
       violation: Math.random() < 0.15
     });
   }
-  
+
+  // ── Draw Vehicles ──
   for (let i = anprCars.length - 1; i >= 0; i--) {
-    let car = anprCars[i];
+    const car = anprCars[i];
     car.x += car.speed;
-    
-    // Draw Car
-    anprCtx.fillStyle = car.color;
-    anprCtx.fillRect(car.x, car.y - 10, 30, 16);
-    
-    // Tracking Bounding Box
-    if (car.x > 30 && car.x < w - 30) {
-      anprCtx.strokeStyle = car.violation && car.scanned ? '#ff4b2b' : '#00e5ff';
+
+    const vw = VEHICLE_WIDTHS[car.type]  || 30;
+    const vh = VEHICLE_HEIGHTS[car.type] || 14;
+
+    // Night-vision green tint applied to car body
+    anprCtx.fillStyle = `hsl(130, 40%, ${15 + Math.random()*3}%)`;
+    anprCtx.fillRect(car.x, car.y - vh/2, vw, vh);
+
+    // Headlights / taillights glow
+    const glowX = car.speed > 0 ? car.x : car.x + vw;
+    const glowColor = car.speed > 0 ? 'rgba(200,255,200,0.7)' : 'rgba(255,60,60,0.7)';
+    anprCtx.fillStyle = glowColor;
+    anprCtx.beginPath();
+    anprCtx.arc(glowX, car.y - 2, 2, 0, Math.PI * 2);
+    anprCtx.arc(glowX, car.y + 2, 2, 0, Math.PI * 2);
+    anprCtx.fill();
+
+    // ── Tracking bounding box ──
+    if (car.x > 20 && car.x < w - 20) {
+      const bColor = car.scanned && car.violation ? '#ff1744' : (car.scanned ? '#00ff46' : '#00e5ff');
+      anprCtx.strokeStyle = bColor;
       anprCtx.lineWidth = 1.5;
-      anprCtx.strokeRect(car.x - 4, car.y - 14, 38, 24);
-      
-      // OCR Text
-      if (car.x > w/2 - 20 && !car.scanned) {
+
+      // Corner tracking markers
+      const bx = car.x - 4, by = car.y - vh/2 - 4, bw = vw + 8, bh = vh + 8;
+      const cs = 6;
+      [[bx,by],[bx+bw-cs,by],[bx,by+bh-cs],[bx+bw-cs,by+bh-cs]].forEach(([cx, cy]) => {
+        anprCtx.beginPath();
+        anprCtx.moveTo(cx + cs, cy); anprCtx.lineTo(cx, cy); anprCtx.lineTo(cx, cy + cs);
+        anprCtx.stroke();
+      });
+
+      // ── OCR scan ──
+      if (car.x > w/2 - 25 && !car.scanned) {
         car.scanned = true;
         if (car.violation) {
-          logAnpr(`VIOLATION: ${car.plate} (No Parking)`, true);
-          showToast("ANPR Alert", `Illegal Parking Detected: ${car.plate}`, 'error');
-          sendTelegramAlert(`🚨 *GridLock AI Alert*\n\n*Violation:* No Parking\n*Vehicle:* \`${car.plate}\`\n*Location:* CAM-442 (MG Road)\n*Action:* Tow Truck Dispatched automatically.`);
+          logAnpr(`🔴 VIOLATION: ${car.plate} [${car.type}] — Illegal Parking`, true);
+          showToast('ANPR Alert', `Violation Detected: ${car.plate} (${car.type})`, 'error');
+          sendTelegramAlert(`🚨 *ANPR Violation*\n*Plate:* \`${car.plate}\`\n*Type:* ${car.type}\n*Cam:* ${ANPR_CAM_ID} · ${ANPR_LOCATION}\n*Action:* E-Challan + Tow Dispatched`);
         } else {
-          logAnpr(`SCAN: ${car.plate} - CLEAR`);
+          logAnpr(`✅ SCAN OK: ${car.plate} [${car.type}] — ${car.confidence}% conf`);
         }
       }
-      
+
+      // Plate + confidence label
       if (car.scanned) {
-        anprCtx.fillStyle = '#fff';
-        anprCtx.font = '10px monospace';
-        anprCtx.fillText(car.plate, car.x - 5, car.y - 18);
+        anprCtx.fillStyle = car.violation ? 'rgba(255,23,68,0.85)' : 'rgba(0,255,70,0.85)';
+        anprCtx.fillRect(bx, by - 13, bw, 11);
+        anprCtx.fillStyle = '#000';
+        anprCtx.font = `bold 7px monospace`;
+        anprCtx.fillText(`${car.plate}  ${car.confidence}%`, bx + 2, by - 4);
       }
     }
-    
-    if (car.x > w) {
-      anprCars.splice(i, 1);
-    }
+
+    if (car.x > w + 60) anprCars.splice(i, 1);
   }
+
+  // ── CRT + Night Vision Overlays (drawn last) ──
+  drawAnprOverlays(w, h, t);
 }
 
 // Start ANPR Simulator

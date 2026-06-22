@@ -32,6 +32,9 @@ OUTPUTS_DIR = os.path.join(BASE_DIR, "Backend", "outputs")
 # ── Cache loaded data ──────────────────────────────────────────────────────
 _cache = {}
 
+# ── Active Dispatch Store (in-memory) ─────────────────────────────────────
+_active_dispatches = {}  # zone_id -> dispatch record
+
 def _load_data():
     if "loaded" not in _cache:
         _cache["raw_df"] = pd.read_csv(os.path.join(OUTPUTS_DIR, "cleaned_data_sample.csv"))
@@ -261,18 +264,72 @@ mappls_cache = {
     "client_secret": None
 }
 
-def get_mappls_config():
-    if mappls_cache["client_id"] is None:
-        env_path = os.path.join(BASE_DIR, ".env")
-        if os.path.exists(env_path):
+CONFIG_PATH = os.path.join(BASE_DIR, "config.json")
+
+def load_config():
+    config = {
+        "MAPPLS_CLIENT_ID": "",
+        "MAPPLS_CLIENT_SECRET": "",
+        "TELEGRAM_BOT_TOKEN": "",
+        "TELEGRAM_CHAT_ID": "",
+        "TWILIO_ACCOUNT_SID": "",
+        "TWILIO_AUTH_TOKEN": "",
+        "TWILIO_FROM_PHONE": "",
+        "TWILIO_TO_PHONE": "",
+        "TWILIO_WHATSAPP_FROM": "whatsapp:+14155238886"
+    }
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, "r") as f:
+                config.update(json.load(f))
+        except Exception as e:
+            print(f"Error loading config.json: {e}")
+    
+    # Fallback to env vars if config.json fields are empty
+    env_keys = {
+        "MAPPLS_CLIENT_ID": "MAPPLS_CLIENT_ID",
+        "MAPPLS_CLIENT_SECRET": "MAPPLS_CLIENT_SECRET",
+        "TELEGRAM_BOT_TOKEN": "TELEGRAM_BOT_TOKEN",
+        "TELEGRAM_CHAT_ID": "TELEGRAM_CHAT_ID",
+        "TWILIO_ACCOUNT_SID": "TWILIO_ACCOUNT_SID",
+        "TWILIO_AUTH_TOKEN": "TWILIO_AUTH_TOKEN",
+        "TWILIO_FROM_PHONE": "TWILIO_FROM_PHONE",
+        "TWILIO_TO_PHONE": "TWILIO_TO_PHONE",
+        "TWILIO_WHATSAPP_FROM": "TWILIO_WHATSAPP_FROM"
+    }
+    
+    # Check .env first if it exists to import initial credentials
+    env_path = os.path.join(BASE_DIR, ".env")
+    if os.path.exists(env_path):
+        try:
             with open(env_path, "r") as f:
                 for line in f:
                     line = line.strip()
                     if line and not line.startswith("#") and "=" in line:
                         k, v = line.split("=", 1)
                         os.environ[k.strip()] = v.strip().strip('"').strip("'")
-        mappls_cache["client_id"] = os.environ.get("MAPPLS_CLIENT_ID", "")
-        mappls_cache["client_secret"] = os.environ.get("MAPPLS_CLIENT_SECRET", "")
+        except Exception:
+            pass
+
+    for k, env_var in env_keys.items():
+        if not config.get(k):
+            config[k] = os.environ.get(env_var, "")
+    
+    return config
+
+def save_config(config_data):
+    try:
+        with open(CONFIG_PATH, "w") as f:
+            json.dump(config_data, f, indent=2)
+        return True
+    except Exception as e:
+        print(f"Error saving config.json: {e}")
+        return False
+
+def get_mappls_config():
+    config = load_config()
+    mappls_cache["client_id"] = config.get("MAPPLS_CLIENT_ID", "")
+    mappls_cache["client_secret"] = config.get("MAPPLS_CLIENT_SECRET", "")
     return mappls_cache["client_id"], mappls_cache["client_secret"]
 
 def get_mappls_token():
@@ -572,10 +629,10 @@ def api_mappls_predictive_flow():
 
 @app.route("/api/mappls/keys")
 def api_mappls_keys():
-    client_id, client_secret = get_mappls_config()
+    config = load_config()
     return jsonify({
-        "client_id": client_id or "",
-        "client_secret": client_secret or ""
+        "client_id": config.get("MAPPLS_CLIENT_ID", ""),
+        "client_secret": config.get("MAPPLS_CLIENT_SECRET", "")
     })
 
 
@@ -588,11 +645,10 @@ def api_mappls_save_keys():
         if not client_id or not client_secret:
             return jsonify({"success": False, "error": "Missing client credentials"}), 400
         
-        # Write to .env
-        env_path = os.path.join(BASE_DIR, ".env")
-        with open(env_path, "w") as f:
-            f.write(f"MAPPLS_CLIENT_ID={client_id}\n")
-            f.write(f"MAPPLS_CLIENT_SECRET={client_secret}\n")
+        config = load_config()
+        config["MAPPLS_CLIENT_ID"] = client_id
+        config["MAPPLS_CLIENT_SECRET"] = client_secret
+        save_config(config)
         
         # Clear cache
         mappls_cache["client_id"] = client_id
@@ -603,6 +659,229 @@ def api_mappls_save_keys():
         return jsonify({"success": True})
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/config")
+def api_get_config():
+    config = load_config()
+    return jsonify(config)
+
+
+@app.route("/api/config/save", methods=["POST"])
+def api_save_config():
+    try:
+        data = request.json
+        config = load_config()
+        config.update(data)
+        if save_config(config):
+            # Reset Mappls credentials cache
+            mappls_cache["client_id"] = config.get("MAPPLS_CLIENT_ID", "")
+            mappls_cache["client_secret"] = config.get("MAPPLS_CLIENT_SECRET", "")
+            mappls_cache["token"] = None
+            mappls_cache["expiry"] = 0
+            return jsonify({"success": True})
+        else:
+            return jsonify({"success": False, "error": "Failed to write config"}), 500
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/dispatch/send", methods=["POST"])
+def api_dispatch_send():
+    try:
+        data = request.json
+        zone_id = data.get("zone_id")
+        severity = data.get("severity")
+        impact_score = float(data.get("impact_score", 0))
+        center_lat = float(data.get("center_lat", 0))
+        center_lng = float(data.get("center_lng", 0))
+        action = data.get("action")
+        risk_score = data.get("risk_score")
+        violation_count = int(data.get("violation_count", 0))
+        if risk_score is not None:
+            risk_score = float(risk_score)
+
+        # ── Store in active dispatches ─────────────────────────────────
+        _active_dispatches[zone_id] = {
+            "zone_id": zone_id,
+            "severity": severity,
+            "impact_score": impact_score,
+            "center_lat": center_lat,
+            "center_lng": center_lng,
+            "action": action,
+            "risk_score": risk_score,
+            "violation_count": violation_count,
+            "dispatched_at": time.strftime('%Y-%m-%d %H:%M:%S'),
+            "resolved": False,
+            "resolved_at": None
+        }
+
+        config = load_config()
+        response_status = {}
+
+        # 1. Telegram Alert Integration
+        tg_token = config.get("TELEGRAM_BOT_TOKEN")
+        tg_chat = config.get("TELEGRAM_CHAT_ID")
+        if tg_token and tg_chat:
+            severity_emoji = {"CRITICAL": "🔴", "HIGH": "🟠", "MEDIUM": "🟡", "LOW": "🟢"}
+            emoji = severity_emoji.get(severity, "⚪")
+            google_maps_link = f"https://www.google.com/maps?q={center_lat},{center_lng}"
+            
+            message_text = (
+                f"🚨 *GRIDLOCK AI — ENFORCEMENT DISPATCH*\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"\n"
+                f"{emoji} *Severity:* {severity}\n"
+                f"📍 *Zone:* {zone_id}\n"
+                f"💥 *Impact Score:* {impact_score:.4f}\n"
+            )
+            if risk_score is not None:
+                message_text += f"📈 *Risk Score:* {risk_score:.4f}\n"
+            message_text += (
+                f"\n"
+                f"⚡ *Action:* {action}\n"
+                f"🗺️ *Location:* {center_lat:.6f}, {center_lng:.6f}\n"
+                f"📎 *Map:* [Open Google Maps]({google_maps_link})\n"
+                f"\n"
+                f"🕒 *Dispatched:* {time.strftime('%Y-%m-%d %H:%M:%S')}\n"
+                f"━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+                f"⚙️ Powered by GridLock AI Engine"
+            )
+            
+            try:
+                tg_res = requests.post(
+                    f"https://api.telegram.org/bot{tg_token}/sendMessage",
+                    json={
+                        "chat_id": tg_chat,
+                        "text": message_text,
+                        "parse_mode": "Markdown",
+                        "disable_web_page_preview": True
+                    },
+                    timeout=5
+                )
+                response_status["telegram"] = {
+                    "success": tg_res.status_code == 200,
+                    "status_code": tg_res.status_code,
+                    "response": tg_res.text
+                }
+            except Exception as e:
+                response_status["telegram"] = {"success": False, "error": str(e)}
+        else:
+            response_status["telegram"] = {"success": False, "reason": "Not configured"}
+
+        # 2. Twilio SMS & WhatsApp alerts (using the local twilio_dispatch file)
+        twilio_sid = config.get("TWILIO_ACCOUNT_SID")
+        twilio_token = config.get("TWILIO_AUTH_TOKEN")
+        if twilio_sid and twilio_token:
+            try:
+                from api.twilio_dispatch import send_sms, send_whatsapp
+                
+                # Check for SMS
+                sms_success, sms_msg = send_sms(
+                    zone_id=zone_id,
+                    severity=severity,
+                    impact_score=impact_score,
+                    center_lat=center_lat,
+                    center_lng=center_lng,
+                    recommended_action=action,
+                    risk_score=risk_score,
+                    secrets=config
+                )
+                response_status["sms"] = {"success": sms_success, "message": sms_msg}
+
+                # Check for WhatsApp
+                wa_success, wa_msg = send_whatsapp(
+                    zone_id=zone_id,
+                    severity=severity,
+                    impact_score=impact_score,
+                    center_lat=center_lat,
+                    center_lng=center_lng,
+                    recommended_action=action,
+                    risk_score=risk_score,
+                    secrets=config
+                )
+                response_status["whatsapp"] = {"success": wa_success, "message": wa_msg}
+            except Exception as e:
+                response_status["twilio_error"] = str(e)
+        else:
+            # Twilio Demo Mode Fallback (like twilio_dispatch's fallback response)
+            from api.twilio_dispatch import build_alert_message
+            msg_body = build_alert_message(zone_id, severity, impact_score, center_lat, center_lng, action, risk_score)
+            response_status["sms"] = {"success": True, "message": f"📨 (DEMO MODE) SMS: {msg_body}"}
+            response_status["whatsapp"] = {"success": True, "message": f"📨 (DEMO MODE) WhatsApp: {msg_body}"}
+
+        return jsonify({"success": True, "status": response_status})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+# ── API: Active Responder Dispatch List ────────────────────────────────────
+@app.route("/api/responder/active")
+def api_responder_active():
+    dispatches = list(_active_dispatches.values())
+    dispatches.sort(key=lambda x: x.get('impact_score', 0), reverse=True)
+    return jsonify(dispatches)
+
+
+@app.route("/api/responder/resolve", methods=["POST"])
+def api_responder_resolve():
+    try:
+        data = request.json
+        zone_id = data.get("zone_id")
+        if zone_id and zone_id in _active_dispatches:
+            _active_dispatches[zone_id]["resolved"] = True
+            _active_dispatches[zone_id]["resolved_at"] = time.strftime('%Y-%m-%d %H:%M:%S')
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route("/api/dispatch/clear", methods=["POST"])
+def api_dispatch_clear():
+    try:
+        _active_dispatches.clear()
+        return jsonify({"success": True})
+    except Exception as e:
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+# ── API: Traffic Mitigation Impact Statistics ──────────────────────────────
+@app.route("/api/mitigation/stats")
+def api_mitigation_stats():
+    resolved_dispatches = sum(1 for d in _active_dispatches.values() if d.get("resolved"))
+    total_dispatches = len(_active_dispatches)
+    active_dispatches = total_dispatches - resolved_dispatches
+
+    # Impact model: avg 350 vehicles per congestion zone, 22 min avg delay
+    avg_vehicles_per_zone = 350
+    avg_idle_time_mins = 22
+
+    vehicles_helped = resolved_dispatches * avg_vehicles_per_zone
+    hours_saved = round((vehicles_helped * avg_idle_time_mins) / 60, 1)
+    fuel_saved_l = round(hours_saved * 2.8, 1)      # 2.8 L/hr idle burn rate
+    co2_saved_kg = round(fuel_saved_l * 2.31, 1)    # petrol: 2.31 kg CO2/L
+    fines_issued = sum(d.get("violation_count", 0) for d in _active_dispatches.values())
+    efficiency_score = round(
+        min(100, (resolved_dispatches / max(1, total_dispatches)) * 100), 1
+    )
+
+    return jsonify({
+        "zones_resolved": resolved_dispatches,
+        "active_dispatches": active_dispatches,
+        "total_dispatches": total_dispatches,
+        "vehicles_helped": vehicles_helped,
+        "hours_saved": hours_saved,
+        "fuel_saved_litres": fuel_saved_l,
+        "co2_saved_kg": co2_saved_kg,
+        "fines_issued": fines_issued,
+        "efficiency_score": efficiency_score
+    })
+
+
+# ── Mobile Responder Portal ────────────────────────────────────────────────
+@app.route("/responder")
+def responder_page():
+    return send_from_directory("static", "responder.html")
 
 
 if __name__ == "__main__":
