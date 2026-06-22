@@ -376,7 +376,8 @@ body {
 .app-layout {
   display: flex;
   margin-top: calc(var(--navbar-height) + var(--alert-height));
-  min-height: calc(100vh - var(--navbar-height) - var(--alert-height));
+  height: calc(100vh - var(--navbar-height) - var(--alert-height));
+  overflow: hidden;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -635,6 +636,7 @@ body {
   padding: 20px 24px;
   overflow-y: auto;
   min-width: 0;
+  height: 100%;
 }
 
 /* ── Stat Cards ───────────────────────────────────────────────────────────── */
@@ -1647,6 +1649,43 @@ body {
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), var(--shadow-glow-cyan);
   overflow: hidden;
   transition: var(--transition-normal);
+}
+
+.mappls-console.expanded {
+  width: 660px;
+}
+
+.mappls-console.minimized {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4), var(--shadow-glow-cyan);
+}
+
+.mappls-console.minimized > div {
+  display: none !important;
+}
+
+/* minimized header override */
+.mappls-console.minimized::before {
+  content: "🌐";
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  transition: transform 0.2s ease;
+}
+
+.mappls-console.minimized:hover::before {
+  transform: scale(1.15);
 }
 
 .mappls-console:hover {
